@@ -287,8 +287,6 @@ end
 !
 no aaa root
 !
-REMOVED_SECRET
-!
 alias c configure terminal
 alias ii show interfaces descr
 !

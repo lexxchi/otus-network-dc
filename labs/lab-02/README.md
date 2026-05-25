@@ -368,8 +368,6 @@ le-1#sh run | no-more
 !
 no aaa root
 !
-REMOVED_SECRET
-!
 alias c configure terminal
 alias ii show interfaces descr
 !
