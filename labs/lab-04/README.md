@@ -637,3 +637,9 @@ router bgp 65103
 !
 end
 ```
+
+
+#### TODO
+
+1. Заменить команду network на route map
+2. Ещё раз посмотреть про path hunting, ибо ничего не понял
