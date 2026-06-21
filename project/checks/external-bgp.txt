@@ -1,0 +1,45 @@
+vyos@vyos-fw:~$ show ip bgp su
+
+IPv4 Unicast Summary (VRF default):
+BGP router identifier 203.0.113.2, local AS number 64497 vrf-id 0
+BGP table version 19
+RIB entries 21, using 2016 bytes of memory
+Peers 2, using 40 KiB of memory
+
+Neighbor        V         AS   MsgRcvd   MsgSent   TblVer  InQ OutQ  Up/Down State/PfxRcd   PfxSnt Desc
+198.51.100.2    4      64496       101       101       19    0    0 01:30:50            3        1 vyos-isp
+203.0.113.1     4      65104      1914      1641       19    0    0 01:21:24            9        1 bl-1 TENANT-1
+
+Total number of neighbors 2
+vyos@vyos-fw:~$
+
+vyos@vyos-fw:~$ show ip bgp neighbors 198.51.100.2 advertised-routes
+BGP table version is 21, local router ID is 203.0.113.2, vrf id 0
+Default local pref 100, local AS 64497
+Status codes:  s suppressed, d damped, h history, * valid, > best, = multipath,
+               i internal, r RIB-failure, S Stale, R Removed
+Nexthop codes: @NNN nexthop's vrf id, < announce-nh-self
+Origin codes:  i - IGP, e - EGP, ? - incomplete
+RPKI validation codes: V valid, I invalid, N Not found
+
+    Network          Next Hop            Metric LocPrf Weight Path
+ *> 192.0.2.0/24     0.0.0.0                  0         32768 i
+
+Total number of prefixes 1
+vyos@vyos-fw:~$ show ip bgp neighbors 198.51.100.2 received-routes
+BGP table version is 21, local router ID is 203.0.113.2, vrf id 0
+Default local pref 100, local AS 64497
+Status codes:  s suppressed, d damped, h history, * valid, > best, = multipath,
+               i internal, r RIB-failure, S Stale, R Removed
+Nexthop codes: @NNN nexthop's vrf id, < announce-nh-self
+Origin codes:  i - IGP, e - EGP, ? - incomplete
+RPKI validation codes: V valid, I invalid, N Not found
+
+    Network          Next Hop            Metric LocPrf Weight Path
+ *> 0.0.0.0/0        198.51.100.2             0             0 64496 i
+ *> 1.1.1.1/32       198.51.100.2             0             0 64496 i
+ *> 8.8.8.8/32       198.51.100.2             0             0 64496 i
+ *> 192.0.2.0/24     198.51.100.2                           0 64496 64497 i
+
+Total number of prefixes 4
+vyos@vyos-fw:~$
