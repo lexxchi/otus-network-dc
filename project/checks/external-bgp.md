@@ -1,3 +1,12 @@
+# Проверка external BGP
+
+## Что проверяем
+
+Проверяем BGP-сессии vyos-fw с vyos-isp и bl-1, а также фильтрацию анонсов наружу.
+
+## Выводы команд
+
+```text
 vyos@vyos-fw:~$ show ip bgp su
 
 IPv4 Unicast Summary (VRF default):
@@ -43,3 +52,4 @@ RPKI validation codes: V valid, I invalid, N Not found
 
 Total number of prefixes 4
 vyos@vyos-fw:~$
+```

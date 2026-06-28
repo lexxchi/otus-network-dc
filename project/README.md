@@ -17,13 +17,13 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | Роль | Количество | Назначение |
 |---|---:|---|
 | Spine | 2 | Underlay/overlay transport, BGP EVPN peering |
-| Leaf | 3 | Подключение клиентов, VTEP, Anycast Gateway |
+| Leaf | 4 | Подключение клиентов, VTEP, Anycast Gateway, MLAG/EVPN multihoming |
 | Border Leaf | 1 | Выход tenant VRF во внешний контур |
 | VyOS FW | 1 | External router/firewall, NAT, имитация ISP edge |
 | Клиентские VLAN | 2 | Пользовательские L2-сегменты |
 | Tenant VRF | 1 | L3-изоляция tenant-сетей |
 
-Базовая часть fabric взята из лабораторной работы lab-06 и вынесена в конфиги MVP: [configs/mvp/bare-metal](configs/mvp/bare-metal/). Данное состояние проекта является минимально рабочим вариантом. Следующие функции будут добавляться поверх MVP отдельными этапами.
+Базовая часть fabric взята из лабораторной работы lab-06 и доработана в проектных конфигах: [configs/bare-metal](configs/bare-metal/) и [configs/clients](configs/clients/). Данное состояние проекта является MVP с уже добавленными элементами отказоустойчивого подключения клиентов.
 
 ## Логическая схема
 
@@ -31,9 +31,9 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 
 ![Схема lab-06 с клиентами](img/eve-ng-scheme2.png)
 
-Текущая стадия работы - MVP: один датацентр с VXLAN EVPN fabric, border leaf, `vyos-fw`, имитацией ISP на `vyos-isp`, NAT и внешними BGP-фильтрами.
+Текущая стадия работы - MVP+: один датацентр с VXLAN EVPN fabric, border leaf, `vyos-fw`, имитацией ISP на `vyos-isp`, NAT, внешними BGP-фильтрами, MLAG-клиентом и EVPN multihoming-клиентом.
 
-![Текущая схема MVP](img/eve-ng-scheme3.png)
+![Текущая схема проекта](img/eve-ng-scheme4.png)
 
 ## Используемые технологии
 
@@ -48,6 +48,9 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | Gateway | Anycast Gateway | Единый шлюз VLAN на всех leaf |
 | Edge | VyOS NAT | Выход tenant-сетей во внешний сегмент |
 | Filtering | VyOS firewall, prefix-list, route-map | Ограничение входящего доступа и коррекция BGP-анонсов |
+| Client HA | MLAG + LACP | Dual-homed подключение `cl-1122` к паре `le-1`/`le-2` |
+| Client HA | EVPN multihoming / ESI-LAG | Dual-homed подключение `cl-3344` к `le-3`/`le-4` без MLAG |
+| Failure handling | Link Tracking | Отслеживание uplink/downlink на leaf для отказоустойчивых клиентских портов |
 
 ## Адресный план
 
@@ -60,6 +63,7 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | le-2 | 65102 |
 | le-3 | 65103 |
 | bl-1 | 65104 |
+| le-4 | 65105 |
 | vyos-fw | 64497 |
 | vyos-isp | 64496 |
 
@@ -73,6 +77,7 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | le-2 | 10.0.1.2/32 |
 | le-3 | 10.0.1.3/32 |
 | bl-1 | 10.0.1.4/32 |
+| le-4 | 10.0.1.5/32 |
 
 ### Underlay p2p
 
@@ -86,6 +91,8 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | sp-2 Ethernet3 <-> le-3 Ethernet2 | 10.2.2.4/31 | 10.2.2.5/31 |
 | sp-1 Ethernet4 <-> bl-1 Ethernet1 | 10.2.1.6/31 | 10.2.1.7/31 |
 | sp-2 Ethernet4 <-> bl-1 Ethernet2 | 10.2.2.6/31 | 10.2.2.7/31 |
+| sp-1 Ethernet5 <-> le-4 Ethernet1 | 10.2.1.8/31 | 10.2.1.9/31 |
+| sp-2 Ethernet5 <-> le-4 Ethernet2 | 10.2.2.8/31 | 10.2.2.9/31 |
 
 ### Tenant-сети
 
@@ -105,8 +112,11 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | cl-22 | 20 | 192.168.20.12/24 |
 | cl-33 | 20 | 192.168.20.13/24 |
 | cl-1122 | 20 | 192.168.20.112/24 |
+| cl-3344 | 20 | 192.168.20.44/24 |
 
 `cl-1122` - VyOS-клиент для демонстрационных проверок. Он подключен к `le-1` и `le-2` через LACP bond `bond0`, использует gateway `192.168.20.1` и может применяться для `curl`/`iperf3` в презентации.
+
+`cl-3344` - VyOS-клиент для проверки EVPN multihoming. Он подключен к `le-3` и `le-4` через LACP bond `bond0`, использует VLAN 20 через `bond0 vif 20`, адрес `192.168.20.44/24` и gateway `192.168.20.1`.
 
 ### L3VNI
 
@@ -161,6 +171,8 @@ router bgp 65101
    neighbor 10.2.1.0 peer group SPINES
    neighbor 10.2.2.0 peer group SPINES
 ```
+
+`le-4` добавлен как отдельный leaf в fabric: ASN `65105`, VTEP/Loopback0 `10.0.1.5/32`, uplink к `sp-1` через `10.2.1.9/31` и uplink к `sp-2` через `10.2.2.9/31`. На spine peer-filter расширен до диапазона leaf-AS `65101-65105`.
 
 ## Overlay EVPN VXLAN
 
@@ -272,7 +284,7 @@ client -> local leaf -> L3VNI TENANT-1 -> bl-1 -> vyos-fw -> NAT -> vyos-isp loo
 
 ### Underlay
 
-Результаты проверки сохранены в [checks/underlay.txt](checks/underlay.txt). По выводам `show ip bgp summary` все leaf и `bl-1` имеют два established-соседства со spine, а оба spine видят все четыре leaf-AS `65101-65104`.
+Результаты базовой проверки сохранены в [checks/underlay.md](checks/underlay.md). По выводам `show ip bgp summary` для MVP все leaf и `bl-1` имеют established-соседства со spine. Дополнительные проверки для `le-4` и EVPN multihoming вынесены в отдельный файл [checks/multihoming.md](checks/multihoming.md).
 
 ```text
 show ip bgp summary
@@ -280,7 +292,7 @@ show ip bgp summary
 
 ### Overlay
 
-Результаты проверки сохранены в [checks/overlay.txt](checks/overlay.txt). EVPN-соседства на leaf находятся в состоянии `Estab`, присутствуют MAC/IP routes Type-2 и IMET routes Type-3 для VNI `10010` и `10020`.
+Результаты проверки сохранены в [checks/overlay.md](checks/overlay.md). EVPN-соседства на leaf находятся в состоянии `Estab`, присутствуют MAC/IP routes Type-2 и IMET routes Type-3 для VNI `10010` и `10020`.
 
 ```text
 show bgp evpn summary
@@ -290,7 +302,7 @@ show bgp evpn route-type imet
 
 ### Tenant routing
 
-Проверка tenant routing также сохранена в [checks/overlay.txt](checks/overlay.txt). На `le-1` default route установлен в `VRF TENANT-1` через VTEP `10.0.1.4`, L3VNI `50000`, то есть через border leaf `bl-1`.
+Проверка tenant routing также сохранена в [checks/overlay.md](checks/overlay.md). На `le-1` default route установлен в `VRF TENANT-1` через VTEP `10.0.1.4`, L3VNI `50000`, то есть через border leaf `bl-1`.
 
 ```text
 show ip route vrf TENANT-1
@@ -300,11 +312,17 @@ show ip route vrf TENANT-1
 
 ### External BGP, firewall и NAT
 
-Результаты внешнего BGP сохранены в [checks/external-bgp.txt](checks/external-bgp.txt). В файле зафиксированы established BGP-сессии `vyos-fw` с `vyos-isp` и `bl-1`, а также проверка advertised-routes в сторону `vyos-isp`: наружу анонсируется только `192.0.2.0/24`.
+Результаты внешнего BGP сохранены в [checks/external-bgp.md](checks/external-bgp.md). В файле зафиксированы established BGP-сессии `vyos-fw` с `vyos-isp` и `bl-1`, а также проверка advertised-routes в сторону `vyos-isp`: наружу анонсируется только `192.0.2.0/24`.
 
-В [checks/external-bgp.txt](checks/external-bgp.txt) также сохранен вывод received-routes от `vyos-isp`: `0.0.0.0/0`, `1.1.1.1/32`, `8.8.8.8/32` и `192.0.2.0/24`.
+В [checks/external-bgp.md](checks/external-bgp.md) также сохранен вывод received-routes от `vyos-isp`: `0.0.0.0/0`, `1.1.1.1/32`, `8.8.8.8/32` и `192.0.2.0/24`.
 
-Проверка firewall сохранена в [checks/firewall.txt](checks/firewall.txt). С `vyos-isp` проверено, что TCP/179 на `198.51.100.1` доступен, а TCP/22 на `198.51.100.1` недоступен.
+Проверка firewall сохранена в [checks/firewall.md](checks/firewall.md). С `vyos-isp` проверено, что TCP/179 на `198.51.100.1` доступен, а TCP/22 на `198.51.100.1` недоступен.
+
+### MLAG и EVPN multihoming
+
+Проверка MLAG сохранена в [checks/mlag.md](checks/mlag.md). В файле зафиксированы `show mlag interfaces` и `show mlag` на `le-1`/`le-2`: MLAG domain `LEAVES-1-2` находится в состоянии `Active`, peer-link поднят, клиентский `Port-Channel55` для `cl-1122` находится в `active-full`.
+
+Проверка EVPN multihoming сохранена в [checks/multihoming.md](checks/multihoming.md). В файле зафиксированы состояние `Port-Channel5` на `le-3`/`le-4`, работа `link tracking group CORE-TRACKING`, EVPN route-type 1 auto-discovery routes, EVPN route-type 4 ethernet-segment routes, состояние LACP bond на `cl-3344`, а также проверки `curl`, `ping` и `iperf3` до `8.8.8.8`.
 
 ### Data plane
 
@@ -321,19 +339,21 @@ show ip route vrf TENANT-1
 | cl-11 -> 192.168.10.12 | Trace до клиента в VLAN 10 доходит до целевого VPCS |
 | cl-33 -> 192.168.10.11 | Trace до клиента в VLAN 10 доходит до целевого VPCS |
 
-Результаты ping и trace сохранены в [checks/pings.txt](checks/pings.txt) и [checks/trace.txt](checks/trace.txt).
+Результаты ping и trace сохранены в [checks/pings.md](checks/pings.md) и [checks/trace.md](checks/trace.md).
 
 ## Что реализовано сейчас
 
 - Подготовлена базовая VXLAN EVPN fabric на основе lab-06.
 - Скопированы исходные конфиги lab-06 в [configs/base-lab-06](configs/base-lab-06/).
-- Подготовлены MVP-конфиги сетевых устройств в [configs/mvp/bare-metal](configs/mvp/bare-metal/).
-- Подготовлены минимальные VPCS-конфиги клиентов в [configs/mvp/clients](configs/mvp/clients/).
+- Подготовлены проектные конфиги сетевых устройств в [configs/bare-metal](configs/bare-metal/).
+- Подготовлены клиентские конфиги в [configs/clients](configs/clients/).
 - Добавлен border leaf `bl-1`.
+- Добавлен leaf `le-4` для EVPN multihoming-сценария.
 - Добавлены конфиги `vyos-fw` и `vyos-isp`.
 - Добавлен VyOS-клиент `cl-1122` в VLAN 20 с dual-homed подключением к `le-1`/`le-2` через MLAG.
+- Добавлен VyOS-клиент `cl-3344` в VLAN 20 с dual-homed подключением к `le-3`/`le-4` через EVPN multihoming.
 - Настроены firewall policy на внешнем интерфейсе `vyos-fw`, route-map для анонса наружу только public `/24` и route-map для отдачи внутрь fabric только default route.
-- Собраны первичные проверки в [checks](checks/).
+- Собраны проверки underlay, overlay, external BGP, firewall, MLAG, EVPN multihoming, ping и trace в [checks](checks/).
 - Подготовлен рабочий план проекта: [plan.md](plan.md).
 
 ## Изменения для cl-1122 и MLAG
@@ -358,6 +378,28 @@ show ip route vrf TENANT-1
 - `Vlan4094` с адресами `172.16.101.1/30` на `le-1` и `172.16.101.2/30` на `le-2`
 - `Management1` в VRF `MGMT`: `192.168.0.1/30` на `le-1` и `192.168.0.2/30` на `le-2`
 - `mlag configuration` с domain-id `LEAVES-1-2`, peer-link `Port-Channel78` и heartbeat через VRF `MGMT`
+
+## Изменения для cl-3344 и EVPN multihoming
+
+Для проверки EVPN multihoming добавлен отдельный leaf `le-4` и новый VyOS-клиент `cl-3344`. В отличие от `cl-1122`, этот клиент подключен не через MLAG-пару, а через EVPN Ethernet Segment между `le-3` и `le-4`.
+
+На `cl-3344` настроено:
+
+- `bond0` в режиме `802.3ad`
+- участники bond: `eth1` в сторону `le-3` и `eth2` в сторону `le-4`
+- VLAN subinterface `bond0 vif 20`
+- IP-адрес `192.168.20.44/24`
+- default route через `192.168.20.1`
+
+На `le-3` и `le-4` настроен общий EVPN Ethernet Segment:
+
+- `Port-Channel5` как trunk-порт для клиента `cl-3344`
+- `Ethernet5` как LACP member-link к клиенту
+- ESI `0000:0000:0000:0000:0001`
+- общий `lacp system-id 1111.2222.3333`
+- `route-target import 00:00:00:00:00:01`
+- DF preference: `50` на `le-3` и `20` на `le-4`
+- `link tracking group CORE-TRACKING` для связи состояния core uplink и downstream client-link
 
 ## Сложности при выполнении
 
@@ -403,10 +445,11 @@ Neighbor Status Codes: m - Under maintenance
 vyos@vyos-isp:/var/www/html$ iperf3 -s
 ```
 
-На клиентском VyOS `cl-1122` запустить тест до loopback-адреса `8.8.8.8`:
+
+На клиентских VyOS `cl-1122` и `cl-3344` запустить тест до loopback-адреса `8.8.8.8`:
 
 ```bash
-vyos@cl-1122:~$ iperf3 -c 8.8.8.8 -P 4 -b 4M -t 20
+iperf3 -c 8.8.8.8 -P 4 -b 4M -t 20
 ```
 
 ### HTTP
@@ -415,29 +458,30 @@ vyos@cl-1122:~$ iperf3 -c 8.8.8.8 -P 4 -b 4M -t 20
 
 ```bash
 vyos@vyos-isp:/var/www/html$ cd /var/www/html
+vyos@vyos-isp:/var/www/html$ sudo systemctl start simple-http.service
 vyos@vyos-isp:/var/www/html$ sudo python3 -m http.server 80
 ```
 
-На клиентском VyOS `cl-1122` проверить доступ через HTTP:
+На клиентских VyOS `cl-1122` и `cl-3344`  проверить доступ через HTTP:
 
 ```bash
-vyos@cl-1122:~$ curl http://8.8.8.8:80/
+curl http://8.8.8.8:80/
 ```
 
 ## Ограничения текущего минимального варианта
 
 - Пока используется один tenant VRF.
-- Multihoming серверов не входит в MVP.
+- EVPN multihoming добавлен и базово проверен для одного клиента. Для финальной защиты можно дополнительно расширить проверки отказа полного leaf, если останется время.
 - Резервирование border leaf не входит в MVP.
 - DCI и второй датацентр оставлены как расширение.
 - Underlay в MVP остается на BGP, OSPF рассматривается как возможное расширение или вариант для второго DC/POD.
-- Текущее состояние является MVP: оно фиксирует базовую VXLAN EVPN fabric, внешний edge, NAT, фильтрацию и проверки. Multihoming, DCI, OOB/iDRAC и дополнительные сервисы будут добавляться поверх этого состояния.
+- Текущее состояние фиксирует VXLAN EVPN fabric, внешний edge, NAT, фильтрацию, MLAG и первый EVPN multihoming-сценарий. DCI, OOB/iDRAC и дополнительные сервисы будут добавляться поверх этого состояния.
 
 ## Возможные расширения
 
-### VXLAN multihoming
+### Доработка EVPN multihoming
 
-Добавить dual-homed server и проверить отказ одного линка. В зависимости от возможностей стенда можно использовать MLAG или EVPN multihoming.
+Расширить уже собранные проверки: добавить явную проверку DF election, MAC/IP route для `192.168.20.44`, отказ одного клиентского линка и отказ одного leaf.
 
 ### Резервирование выхода наружу
 

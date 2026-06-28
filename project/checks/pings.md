@@ -1,3 +1,12 @@
+# Проверка ping
+
+## Что проверяем
+
+Проверяем L2/L3-связность внутри fabric и доступ tenant-клиентов до имитации внешнего интернета.
+
+## Выводы команд
+
+```text
 cl-3> ping 1.1.1.1
 
 84 bytes from 1.1.1.1 icmp_seq=1 ttl=62 time=313.355 ms
@@ -50,3 +59,4 @@ trace to 1.1.1.1, 8 hops max, press Ctrl+C to stop
  4   *1.1.1.1   20.290 ms (ICMP type:3, code:3, Destination port unreachable)
 
 cl-1>
+```

@@ -1,3 +1,12 @@
+# Проверка underlay
+
+## Что проверяем
+
+Проверяем eBGP-соседства IPv4 underlay между leaf/border leaf и spine.
+
+## Выводы команд
+
+```text
 le-1#show ip bgp summary
 BGP summary information for VRF default
 Router identifier 10.0.1.1, local AS number 65101
@@ -59,3 +68,4 @@ Neighbor Status Codes: m - Under maintenance
   10.2.1.5 4 65103           3318      3318    0    0 02:19:10 Estab   1      1
   10.2.1.7 4 65104           2023      2028    0    0 01:24:46 Estab   1      1
 sp-1#
+```

@@ -1,3 +1,12 @@
+# Проверка trace
+
+## Что проверяем
+
+Проверяем путь трафика через Anycast Gateway, fabric, border leaf и vyos-fw.
+
+## Выводы команд
+
+```text
 cl-1> trace 8.8.8.8
 trace to 8.8.8.8, 8 hops max, press Ctrl+C to stop
  1   192.168.10.1   10.271 ms  4.246 ms  3.638 ms
@@ -29,3 +38,4 @@ trace to 192.168.10.11, 8 hops max, press Ctrl+C to stop
  3   *192.168.10.11   25.284 ms (ICMP type:3, code:3, Destination port unreachable)
 
 cl-33>
+```

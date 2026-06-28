@@ -1,3 +1,12 @@
+# Проверка overlay EVPN
+
+## Что проверяем
+
+Проверяем EVPN-соседства, MAC/IP routes, IMET routes и наличие маршрутов в VRF TENANT-1.
+
+## Выводы команд
+
+```text
 le-1#show bgp evpn summary
 BGP summary information for VRF default
 Router identifier 10.0.1.1, local AS number 65101
@@ -107,3 +116,4 @@ Gateway of last resort:
  B E      203.0.113.0/30 [200/0] via VTEP 10.0.1.4 VNI 50000 router-mac 50:01:00:02:f6:c5 local-interface Vxlan1
 
 le-1#
+```
