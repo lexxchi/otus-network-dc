@@ -20,8 +20,8 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | Leaf | 4 | Подключение клиентов, VTEP, Anycast Gateway, MLAG/EVPN multihoming |
 | Border Leaf | 1 | Выход tenant VRF во внешний контур |
 | VyOS FW | 1 | External router/firewall, NAT, имитация ISP edge |
-| Клиентские VLAN | 2 | Пользовательские L2-сегменты |
-| Tenant VRF | 1 | L3-изоляция tenant-сетей |
+| Клиентские VLAN | 3 | Пользовательские и OOB/iDRAC L2-сегменты |
+| Tenant VRF | 2 | L3-изоляция production и IDRAC-сетей |
 
 Базовая часть fabric взята из лабораторной работы lab-06 и доработана в проектных конфигах: [configs/bare-metal](configs/bare-metal/) и [configs/clients](configs/clients/). Данное состояние проекта является MVP с уже добавленными элементами отказоустойчивого подключения клиентов.
 
@@ -31,9 +31,9 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 
 ![Схема lab-06 с клиентами](img/eve-ng-scheme2.png)
 
-Текущая стадия работы - MVP+: один датацентр с VXLAN EVPN fabric, border leaf, `vyos-fw`, имитацией ISP на `vyos-isp`, NAT, внешними BGP-фильтрами, MLAG-клиентом и EVPN multihoming-клиентом.
+Текущая стадия работы - MVP+: один датацентр с VXLAN EVPN fabric, border leaf, `vyos-fw`, имитацией ISP на `vyos-isp`, NAT, внешними BGP-фильтрами, MLAG-клиентом, EVPN multihoming-клиентом и отдельным VRF `IDRAC`.
 
-![Текущая схема проекта](img/eve-ng-scheme4.png)
+![Текущая схема проекта](img/eve-ng-scheme5.png)
 
 ## Используемые технологии
 
@@ -44,6 +44,7 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | Overlay data plane | VXLAN | Инкапсуляция клиентского L2/L3-трафика |
 | BGP separation | Underlay/Overlay peer-groups | IPv4-сессии по p2p-адресам, EVPN-сессии по Loopback0 |
 | Tenant routing | VRF TENANT-1 | Изоляция клиентских маршрутов |
+| OOB routing | VRF IDRAC | Отдельный публичный OOB/iDRAC-сегмент |
 | L2 service | L2VNI | Растягивание VLAN поверх fabric |
 | L3 service | L3VNI | Маршрутизация между VLAN внутри tenant VRF |
 | Gateway | Anycast Gateway | Единый шлюз VLAN на всех leaf |
@@ -101,6 +102,7 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 |---:|---:|---|---|
 | 10 | 10010 | 10:10010 | 192.168.10.1/24 |
 | 20 | 10020 | 20:10020 | 192.168.20.1/24 |
+| 30 | 10030 | 30:10030 | 198.51.100.129/25 на `bl-1` |
 
 ### Клиенты
 
@@ -108,30 +110,37 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 |---|---:|---|
 | cl-1 | 10 | 192.168.10.11/24 |
 | cl-2 | 10 | 192.168.10.12/24 |
-| cl-3 | 10 | 192.168.10.13/24 |
 | cl-11 | 20 | 192.168.20.11/24 |
 | cl-22 | 20 | 192.168.20.12/24 |
 | cl-33 | 20 | 192.168.20.13/24 |
 | cl-1122 | 20 | 192.168.20.112/24 |
 | cl-3344 | 20 | 192.168.20.44/24 |
+| cl-idrac-1 | 30 | 198.51.100.130/25 |
+| cl-idrac-2 | 30 | 198.51.100.143/25 |
 
 `cl-1122` - VyOS-клиент для демонстрационных проверок. Он подключен к `le-1` и `le-2` через LACP bond `bond0`, использует gateway `192.168.20.1` и может применяться для `curl`/`iperf3` в презентации.
 
 `cl-3344` - VyOS-клиент для проверки EVPN multihoming. Он подключен к `le-3` и `le-4` через LACP bond `bond0`, использует VLAN 20 через `bond0 vif 20`, адрес `192.168.20.44/24` и gateway `192.168.20.1`.
+
+`cl-idrac-2` сделан вместо прежнего клиента `cl-3`: порт на `le-3` переведен из production VLAN 10 в IDRAC VLAN 30.
 
 ### L3VNI
 
 | VRF | L3VNI | Route Target |
 |---|---:|---|
 | TENANT-1 | 50000 | 50000:50000 |
+| IDRAC | Не используется | VLAN 30 растянут как L2VNI до gateway на `bl-1` |
 
 ### Внешний контур
 
 | Link | Адресация | Назначение |
 |---|---|---|
-| bl-1 Ethernet3 <-> vyos-fw eth0 | 203.0.113.0/30 | Transit из TENANT-1 до external router/firewall |
+| bl-1 Ethernet3 <-> vyos-fw eth0 | trunk VLAN 100,130 | Общий физический trunk до external router/firewall |
+| VLAN 100 transit | 203.0.113.0/30 | Transit из `TENANT-1` до `vyos-fw` |
+| VLAN 130 transit | 203.0.113.4/30 | Transit из `IDRAC` до `vyos-fw` |
 | vyos-fw eth1 <-> vyos-isp eth0 | 198.51.100.0/30 | Имитация внешнего ISP-сегмента |
 | DC public prefix | 192.0.2.0/24 | Публичная IPv4-сеть ДЦ, анонсируемая в сторону ISP |
+| IDRAC public prefix | 198.51.100.128/25 | Публичная iDRAC/OOB-сеть, анонсируемая в сторону ISP |
 | vyos-fw lo | 192.0.2.1/32 | Service public address из сети ДЦ |
 | vyos-fw lo | 192.0.2.10/32, 192.0.2.20/32 | Public NAT addresses для VLAN 10 и VLAN 20 |
 | vyos-isp lo | 8.8.8.8/32, 1.1.1.1/32 | Имитация интернет |
@@ -142,8 +151,11 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 
 | Сегмент | Адресация | Назначение |
 |---|---|---|
-| iDRAC/OOB VLAN | TODO | Out-of-band управление серверами клиента |
-| Public client prefix | TODO | Белые адреса клиента для management-доступа |
+| iDRAC/OOB VLAN | VLAN 30, L2VNI 10030 | Out-of-band управление серверами клиента |
+| Public client prefix | 198.51.100.128/25 | Белые адреса клиента для management-доступа |
+| Gateway | 198.51.100.129/25 | Шлюз VRF `IDRAC` на `bl-1` |
+| cl-idrac-1 | 198.51.100.130/25 | iDRAC-клиент напрямую на `bl-1` |
+| cl-idrac-2 | 198.51.100.143/25 | iDRAC-клиент через VXLAN fabric на `le-3` |
 
 ## Underlay
 
@@ -268,19 +280,19 @@ Border leaf добавлен как обычный leaf fabric:
 - свой Loopback0/VTEP
 - BGP underlay к spine
 - MP-BGP EVPN overlay
-- участие в `TENANT-1`
-- порт `Ethernet3` подключен к `vyos-fw` в `VRF TENANT-1`.
+- участие в `TENANT-1` и `IDRAC`
+- порт `Ethernet3` подключен к `vyos-fw` как trunk с transit VLAN 100 и 130.
 
-Через border leaf tenant VRF получает маршрут наружу. Между `bl-1` и `vyos-fw` используется eBGP:
+Через border leaf tenant VRF получают маршруты наружу. Между `bl-1` и `vyos-fw` используется общий физический trunk и отдельные L3 transit VLAN:
 
-| Устройство | Интерфейс | IP | ASN |
-|---|---|---|---:|
-| bl-1 | Ethernet3 | 203.0.113.1/30 | 65104 |
-| vyos-fw | eth0 | 203.0.113.2/30 | 64497 |
+| VRF | VLAN | bl-1 | vyos-fw | Назначение |
+|---|---:|---|---|---|
+| TENANT-1 | 100 | 203.0.113.1/30 | 203.0.113.2/30 | Production transit |
+| IDRAC | 130 | 203.0.113.5/30 | 203.0.113.6/30 | OOB/iDRAC transit |
 
-`vyos-fw` отдает default route в сторону `bl-1`, а `bl-1` импортирует его в `TENANT-1`.
+`vyos-fw` отдает default route в сторону `bl-1` отдельно для `TENANT-1` и `IDRAC`. На `vyos-fw` эти сегменты также разнесены по VRF `TENANT-1` и `IDRAC`, а выход в сторону `vyos-isp` выполняется через route leaking в default/global table.
 
-В сторону fabric применяется route-map `export-to-dc`: во внутреннюю сеть отдается только `0.0.0.0/0`. Публичный префикс ДЦ и внешние маршруты ISP внутрь tenant VRF не анонсируются.
+В сторону fabric применяется route-map `export-to-dc`: во внутренние VRF отдается только `0.0.0.0/0`. Публичный префикс ДЦ и внешние маршруты ISP внутрь tenant VRF не анонсируются.
 
 Планируемый путь внешнего трафика:
 
@@ -288,21 +300,42 @@ Border leaf добавлен как обычный leaf fabric:
 client -> local leaf -> L3VNI TENANT-1 -> bl-1 -> vyos-fw -> NAT -> vyos-isp loopback
 ```
 
+## VRF IDRAC
+
+Для out-of-band/iDRAC-доступа добавлен отдельный VRF `IDRAC`, VLAN 30 и L2VNI 10030. В отличие от `TENANT-1`, для IDRAC не используется anycast gateway на всех leaf: шлюз `198.51.100.129/25` расположен на `bl-1` в `Vlan30`.
+
+IDRAC-клиенты:
+
+- `cl-idrac-1` подключен напрямую к `bl-1 Ethernet4`, адрес `198.51.100.130/25`
+- `cl-idrac-2` подключен к `le-3 Ethernet3`, адрес `198.51.100.143/25`
+
+`cl-idrac-2` заменил прежний production-клиент `cl-3`: порт `le-3 Ethernet3` переведен в VLAN 30, а VLAN 30 растягивается по fabric через VXLAN L2VNI 10030 до `bl-1`.
+
+Для выхода IDRAC в интернет используется отдельный transit VLAN 130 между `bl-1` и `vyos-fw`. На `vyos-fw` префикс `198.51.100.128/25` анонсируется в сторону `vyos-isp` без NAT, потому что это демонстрационная публичная сеть.
+
+IDRAC-сеть намеренно не закрыта на `vyos-fw` белым списком источников и доступна из имитированного интернета. Это сделано для демонстрации: трафик из production-сети к `198.51.100.143` не маршрутизируется напрямую внутри fabric между VRF, а выходит через `vyos-fw`/`vyos-isp` и возвращается как внешний трафик к публичному IDRAC-префиксу. Это видно по `traceroute` с `cl-3344` и `tcpdump` на `vyos-isp`.
+
 ## VyOS NAT
 
 `vyos-fw` выполняет роль внешнего router/firewall. На нем настроены:
 
-- интерфейс в сторону border leaf
+- trunk-интерфейс в сторону border leaf
+- subinterface `eth0.100` в VRF `TENANT-1`
+- subinterface `eth0.130` в VRF `IDRAC`
 - интерфейс в сторону условного ISP
-- eBGP-соседство с `bl-1`
+- eBGP-соседство с `bl-1` в VRF `TENANT-1`
+- eBGP-соседство с `bl-1` в VRF `IDRAC`
 - eBGP-соседство с `vyos-isp`
 - default route в сторону `vyos-isp`
 - анонс публичного префикса ДЦ `192.0.2.0/24` в сторону `vyos-isp`
-- outbound prefix-list/route-map в сторону `vyos-isp`, чтобы наружу анонсировался только `192.0.2.0/24`
+- анонс IDRAC-префикса `198.51.100.128/25` в сторону `vyos-isp`
+- outbound prefix-list/route-map в сторону `vyos-isp`, чтобы наружу анонсировались только разрешенные public prefixes
 - outbound prefix-list/route-map в сторону `bl-1`, чтобы внутрь fabric отдавался только default route
 - local firewall на внешнем интерфейсе `eth1`: разрешены BGP только от `vyos-isp` и SSH только из `192.0.2.0/24`
 - source NAT для `192.168.10.0/24` в адрес `192.0.2.10`
 - source NAT для `192.168.20.0/24` в адрес `192.0.2.20`
+- route leaking из VRF `TENANT-1` и `IDRAC` в default/global table для выхода к `vyos-isp`
+- static routes из default/global table обратно в `TENANT-1` и `IDRAC`
 - проверка прохождения трафика из tenant-сетей до loopback-адресов `vyos-isp`.
 
 `vyos-isp` имитирует внешний интернет. Для проверки на нем настроены loopback-адреса `8.8.8.8/32` и `1.1.1.1/32`, которые анонсируются в сторону `vyos-fw` вместе с default route.
@@ -353,22 +386,27 @@ show ip route vrf TENANT-1
 
 Проверка EVPN multihoming сохранена в [checks/multihoming.md](checks/multihoming.md). В файле зафиксированы состояние `Port-Channel5` на `le-3`/`le-4`, работа `link tracking group CORE-TRACKING`, EVPN route-type 1 auto-discovery routes, EVPN route-type 4 ethernet-segment routes, состояние LACP bond на `cl-3344`, а также проверки `curl`, `ping` и `iperf3` до `8.8.8.8`.
 
+### VRF IDRAC
+
+Проверка VRF `IDRAC` сохранена в [checks/VRF IDRAC.md](checks/VRF%20IDRAC.md). В файле зафиксированы ARP-записи `cl-idrac-1` и `cl-idrac-2` на `bl-1`, ping/traceroute от IDRAC-клиентов до `8.8.8.8`, ping/traceroute от `cl-3344` до `198.51.100.143`, а также `tcpdump` на `vyos-isp`, подтверждающий прохождение traffic path через внешний контур.
+
 ### Data plane
 
 В файлах сохранены следующие проверки:
 
 | Сценарий | Ожидаемый результат |
 |---|---|
-| cl-3 -> 1.1.1.1 | Ping до loopback на `vyos-isp` успешен |
 | cl-33 -> 1.1.1.1 | Ping до loopback на `vyos-isp` успешен |
 | cl-2 -> 192.168.20.13 | Межвлановая связность через `TENANT-1` работает |
-| cl-2 -> 192.168.10.13 | Связность внутри VLAN 10 работает |
 | cl-1 -> 8.8.8.8 | Trace проходит через gateway, `vyos-fw` и доходит до loopback `vyos-isp` |
 | cl-1 -> 1.1.1.1 | Trace проходит через gateway, `vyos-fw` и доходит до loopback `vyos-isp` |
 | cl-11 -> 192.168.10.12 | Trace до клиента в VLAN 10 доходит до целевого VPCS |
 | cl-33 -> 192.168.10.11 | Trace до клиента в VLAN 10 доходит до целевого VPCS |
+| cl-idrac-1 -> 8.8.8.8 | IDRAC-клиент выходит наружу через VRF `IDRAC` и `vyos-fw` |
+| cl-idrac-2 -> 8.8.8.8 | IDRAC-клиент через VXLAN L2VNI 10030 выходит наружу через `bl-1` |
+| cl-3344 -> 198.51.100.143 | Production-клиент достигает IDRAC public prefix через внешний контур |
 
-Результаты ping и trace сохранены в [checks/pings.md](checks/pings.md) и [checks/trace.md](checks/trace.md).
+Результаты ping и trace сохранены в [checks/pings.md](checks/pings.md), [checks/trace.md](checks/trace.md) и [checks/VRF IDRAC.md](checks/VRF%20IDRAC.md).
 
 ## Что реализовано сейчас
 
@@ -381,11 +419,13 @@ show ip route vrf TENANT-1
 - Добавлены конфиги `vyos-fw` и `vyos-isp`.
 - Добавлен VyOS-клиент `cl-1122` в VLAN 20 с dual-homed подключением к `le-1`/`le-2` через MLAG.
 - Добавлен VyOS-клиент `cl-3344` в VLAN 20 с dual-homed подключением к `le-3`/`le-4` через EVPN multihoming.
+- Добавлен VRF `IDRAC`, VLAN 30, L2VNI 10030 и публичный префикс `198.51.100.128/25`.
+- Клиент `cl-3` заменен на `cl-idrac-2` в VLAN 30.
+- Добавлены IDRAC-клиенты `cl-idrac-1` и `cl-idrac-2`.
 - Разделены BGP underlay и overlay: IPv4 underlay работает по p2p-соседствам, EVPN overlay работает по `Loopback0`.
 - В IPv4 underlay анонсируются только loopback `/32`; p2p `/31` не попадают в BGP RIB.
 - Настроены firewall policy на внешнем интерфейсе `vyos-fw`, route-map для анонса наружу только public `/24` и route-map для отдачи внутрь fabric только default route.
-- Собраны проверки underlay, overlay, external BGP, firewall, MLAG, EVPN multihoming, ping и trace в [checks](checks/).
-- Подготовлен рабочий план проекта: [plan.md](plan.md).
+- Собраны проверки underlay, overlay, external BGP, firewall, MLAG, EVPN multihoming, VRF IDRAC, ping и trace в [checks](checks/).
 
 ## Изменения для cl-1122 и MLAG
 
@@ -468,6 +508,15 @@ Neighbor Status Codes: m - Under maintenance
 
 Команды для демонстрации прикладной связности через VXLAN EVPN fabric, border leaf, `vyos-fw`, NAT и внешний сегмент `vyos-isp`.
 
+### Эволюция схемы
+
+Показать развитие стенда по картинкам:
+
+- [img/eve-ng-scheme.png](img/eve-ng-scheme.png) - исходная схема лабораторной.
+- [img/eve-ng-scheme2.png](img/eve-ng-scheme2.png) - базовый VXLAN EVPN fabric с клиентами.
+- [img/eve-ng-scheme3.png](img/eve-ng-scheme3.png) - MVP с border leaf, `vyos-fw`, `vyos-isp`, NAT и внешним BGP.
+- [img/eve-ng-scheme4.png](img/eve-ng-scheme4.png) - текущая схема проекта с MLAG, EVPN multihoming и VRF `IDRAC`.
+
 ### Iperf
 
 На `vyos-isp` запустить сервер:
@@ -499,14 +548,30 @@ vyos@vyos-isp:/var/www/html$ sudo python3 -m http.server 80
 curl http://8.8.8.8:80/
 ```
 
+### IDRAC через внешний контур
+
+На `vyos-isp` запустить `tcpdump`, чтобы показать, что трафик из production VRF к public IDRAC-сети проходит через внешний контур, а не маршрутизируется напрямую внутри fabric:
+
+```bash
+vyos@vyos-isp:~$ sudo tcpdump -ni eth0 host 198.51.100.143
+```
+
+На клиентском VyOS `cl-3344` проверить ICMP и трассировку до IDRAC-клиента `198.51.100.143`:
+
+```bash
+vyos@cl-3344:~$ sudo ping -c 4 198.51.100.143
+vyos@cl-3344:~$ traceroute 198.51.100.143
+```
+
 ## Ограничения текущего минимального варианта
 
-- Пока используется один tenant VRF.
+- Используются два VRF: `TENANT-1` для production-сетей и `IDRAC` для OOB/iDRAC.
 - EVPN multihoming добавлен и базово проверен для одного клиента. Для финальной защиты можно дополнительно расширить проверки отказа полного leaf, если останется время.
 - Резервирование border leaf не входит в MVP.
 - DCI и второй датацентр оставлены как расширение.
 - Underlay в MVP остается на BGP, OSPF рассматривается как возможное расширение или вариант для второго DC/POD.
-- Текущее состояние фиксирует VXLAN EVPN fabric, внешний edge, NAT, фильтрацию, MLAG и первый EVPN multihoming-сценарий. DCI, OOB/iDRAC и дополнительные сервисы будут добавляться поверх этого состояния.
+- IDRAC public prefix намеренно доступен из имитированного интернета без whitelist на `vyos-fw`, чтобы наглядно показать внешний путь трафика.
+- Текущее состояние фиксирует VXLAN EVPN fabric, внешний edge, NAT, фильтрацию, MLAG, EVPN multihoming и отдельный IDRAC VRF. DCI и дополнительные сервисы будут добавляться поверх этого состояния.
 
 ## Возможные расширения
 
@@ -514,21 +579,14 @@ curl http://8.8.8.8:80/
 
 Расширить уже собранные проверки: добавить явную проверку DF election, отказ одного клиентского линка и отказ одного leaf.
 
-### Резервирование выхода наружу
-
-Добавить второй border leaf или второй uplink к VyOS/ISP, настроить резервный default route и проверить отказ внешнего линка.
 
 ### Второй DC или POD
 
 Добавить второй fabric/POD и связать площадки через DCI/EVPN. В этом варианте можно сделать underlay второго DC на OSPF и сравнить с BGP-underlay первого DC.
 
-### Сегментация
+### Резервирование выхода наружу
 
-Добавить второй tenant VRF и показать изоляцию tenant-сетей
-
-### OOB/iDRAC-сеть
-
-Добавить отдельный VLAN для iDRAC/IPMI/management-интерфейсов серверов. Для него можно использовать отдельный L2VNI или отдельный VRF, если нужно жестко отделить out-of-band управление от production-сетей. Адресация планируется из белого клиентского префикса, а доступ должен фильтроваться на VyOS/firewall или внешнем edge.
+Добавить второй border leaf или второй uplink к VyOS/ISP, настроить резервный default route и проверить отказ внешнего линка.
 
 ## Вывод
 
