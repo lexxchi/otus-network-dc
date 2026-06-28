@@ -42,6 +42,7 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | Underlay | eBGP IPv4 | IP-достижимость loopback/VTEP между leaf и spine |
 | Overlay control plane | MP-BGP EVPN | Распространение MAC/IP, IMET и IP-prefix маршрутов |
 | Overlay data plane | VXLAN | Инкапсуляция клиентского L2/L3-трафика |
+| BGP separation | Underlay/Overlay peer-groups | IPv4-сессии по p2p-адресам, EVPN-сессии по Loopback0 |
 | Tenant routing | VRF TENANT-1 | Изоляция клиентских маршрутов |
 | L2 service | L2VNI | Растягивание VLAN поверх fabric |
 | L3 service | L3VNI | Маршрутизация между VLAN внутри tenant VRF |
@@ -146,37 +147,65 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 
 ## Underlay
 
-Underlay построен на eBGP между leaf и spine. Все межкоммутаторные соединения являются L3 p2p-линками с адресацией `/31`. Loopback0 используется как VTEP source-interface для VXLAN и как BGP router-id.
+Underlay построен на eBGP между leaf и spine. Все межкоммутаторные соединения являются L3 p2p-линками с адресацией `/31`. Underlay BGP-сессии поднимаются по p2p-адресам и используются только для распространения loopback `/32`, необходимых для VTEP и overlay BGP.
+
+`Loopback0` используется как VTEP source-interface для VXLAN, BGP router-id и source-interface для overlay EVPN-сессий. P2P-сети `/31` не распространяются в BGP RIB через `redistribute connected`; вместо этого на каждом устройстве явно анонсируется только свой loopback через `network <loopback>/32`.
 
 Для внешних и публичных сегментов используются диапазоны, зарезервированные для документации и примеров: `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`. Это позволяет показать логику public addressing без использования реальных чужих адресов.
 
-На spine используется BGP listen range для динамического подключения leaf:
+На spine используются отдельные BGP listen range для underlay и overlay:
 
 ```text
 router bgp 65001
-   bgp listen range 10.2.0.0/16 peer-group LEAFS peer-filter PF_LEAFS
-   neighbor LEAFS peer group
-   neighbor LEAFS bfd
-   neighbor LEAFS send-community extended
+   bgp listen range 10.0.0.0/16 peer-group LEAFS-OVERLAY peer-filter PF_LEAFS
+   bgp listen range 10.2.0.0/16 peer-group LEAFS-UNDERLAY peer-filter PF_LEAFS
+   neighbor LEAFS-OVERLAY peer group
+   neighbor LEAFS-OVERLAY update-source Loopback0
+   neighbor LEAFS-OVERLAY ebgp-multihop 3
+   neighbor LEAFS-OVERLAY send-community extended
+   neighbor LEAFS-UNDERLAY peer group
+   neighbor LEAFS-UNDERLAY bfd
+   neighbor LEAFS-UNDERLAY send-community extended
+   !
+   address-family evpn
+      neighbor LEAFS-OVERLAY activate
+   !
+   address-family ipv4
+      neighbor LEAFS-UNDERLAY activate
+      network 10.0.1.0/32
 ```
 
-На leaf настроены соседства к обоим spine:
+На leaf underlay-соседи указываются по p2p-адресам spine, а overlay-соседи - по loopback-адресам spine:
 
 ```text
 router bgp 65101
-   neighbor SPINES peer group
-   neighbor SPINES remote-as 65001
-   neighbor SPINES bfd
-   neighbor SPINES send-community extended
-   neighbor 10.2.1.0 peer group SPINES
-   neighbor 10.2.2.0 peer group SPINES
+   neighbor SPINES-OVERLAY peer group
+   neighbor SPINES-OVERLAY remote-as 65001
+   neighbor SPINES-OVERLAY update-source Loopback0
+   neighbor SPINES-OVERLAY ebgp-multihop 3
+   neighbor SPINES-OVERLAY send-community extended
+   neighbor SPINES-UNDERLAY peer group
+   neighbor SPINES-UNDERLAY remote-as 65001
+   neighbor SPINES-UNDERLAY bfd
+   neighbor SPINES-UNDERLAY send-community extended
+   neighbor 10.0.1.0 peer group SPINES-OVERLAY
+   neighbor 10.0.2.0 peer group SPINES-OVERLAY
+   neighbor 10.2.1.0 peer group SPINES-UNDERLAY
+   neighbor 10.2.2.0 peer group SPINES-UNDERLAY
+   !
+   address-family evpn
+      neighbor SPINES-OVERLAY activate
+   !
+   address-family ipv4
+      neighbor SPINES-UNDERLAY activate
+      network 10.0.1.1/32
 ```
 
 `le-4` добавлен как отдельный leaf в fabric: ASN `65105`, VTEP/Loopback0 `10.0.1.5/32`, uplink к `sp-1` через `10.2.1.9/31` и uplink к `sp-2` через `10.2.2.9/31`. На spine peer-filter расширен до диапазона leaf-AS `65101-65105`.
 
 ## Overlay EVPN VXLAN
 
-Overlay использует MP-BGP EVPN для распространения информации о MAC/IP, BUM-доставке и маршрутах tenant VRF. VXLAN-туннели строятся между VTEP на leaf-коммутаторах, источник туннелей - `Loopback0`.
+Overlay использует MP-BGP EVPN для распространения информации о MAC/IP, BUM-доставке и маршрутах tenant VRF. EVPN-соседства строятся между `Loopback0` leaf/border leaf и spine, а не между p2p-адресами. VXLAN-туннели также строятся между VTEP на `Loopback0`.
 
 ```text
 interface Vxlan1
@@ -284,7 +313,7 @@ client -> local leaf -> L3VNI TENANT-1 -> bl-1 -> vyos-fw -> NAT -> vyos-isp loo
 
 ### Underlay
 
-Результаты базовой проверки сохранены в [checks/underlay.md](checks/underlay.md). По выводам `show ip bgp summary` для MVP все leaf и `bl-1` имеют established-соседства со spine. Дополнительные проверки для `le-4` и EVPN multihoming вынесены в отдельный файл [checks/multihoming.md](checks/multihoming.md).
+Результаты базовой проверки сохранены в [checks/underlay.md](checks/underlay.md). По выводам `show ip bgp summary` все leaf и `bl-1` имеют established IPv4-соседства со spine по p2p-адресам. На spine в IPv4 BGP RIB присутствуют только loopback `/32`, p2p-сети `/31` не распространяются.
 
 ```text
 show ip bgp summary
@@ -292,7 +321,7 @@ show ip bgp summary
 
 ### Overlay
 
-Результаты проверки сохранены в [checks/overlay.md](checks/overlay.md). EVPN-соседства на leaf находятся в состоянии `Estab`, присутствуют MAC/IP routes Type-2 и IMET routes Type-3 для VNI `10010` и `10020`.
+Результаты проверки сохранены в [checks/overlay.md](checks/overlay.md). EVPN-соседства находятся в состоянии `Estab` и строятся по loopback-адресам: leaf видит spine `10.0.1.0`/`10.0.2.0`, а spine видит leaf/border leaf `10.0.1.1`-`10.0.1.5`. В EVPN присутствуют MAC/IP routes Type-2, IMET routes Type-3 и маршруты для multihomed клиента `192.168.20.44`.
 
 ```text
 show bgp evpn summary
@@ -352,6 +381,8 @@ show ip route vrf TENANT-1
 - Добавлены конфиги `vyos-fw` и `vyos-isp`.
 - Добавлен VyOS-клиент `cl-1122` в VLAN 20 с dual-homed подключением к `le-1`/`le-2` через MLAG.
 - Добавлен VyOS-клиент `cl-3344` в VLAN 20 с dual-homed подключением к `le-3`/`le-4` через EVPN multihoming.
+- Разделены BGP underlay и overlay: IPv4 underlay работает по p2p-соседствам, EVPN overlay работает по `Loopback0`.
+- В IPv4 underlay анонсируются только loopback `/32`; p2p `/31` не попадают в BGP RIB.
 - Настроены firewall policy на внешнем интерфейсе `vyos-fw`, route-map для анонса наружу только public `/24` и route-map для отдачи внутрь fabric только default route.
 - Собраны проверки underlay, overlay, external BGP, firewall, MLAG, EVPN multihoming, ping и trace в [checks](checks/).
 - Подготовлен рабочий план проекта: [plan.md](plan.md).
@@ -481,7 +512,7 @@ curl http://8.8.8.8:80/
 
 ### Доработка EVPN multihoming
 
-Расширить уже собранные проверки: добавить явную проверку DF election, MAC/IP route для `192.168.20.44`, отказ одного клиентского линка и отказ одного leaf.
+Расширить уже собранные проверки: добавить явную проверку DF election, отказ одного клиентского линка и отказ одного leaf.
 
 ### Резервирование выхода наружу
 

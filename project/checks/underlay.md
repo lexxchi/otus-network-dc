@@ -2,7 +2,7 @@
 
 ## Что проверяем
 
-Проверяем eBGP-соседства IPv4 underlay между leaf/border leaf и spine.
+Проверяем eBGP-соседства IPv4 underlay между leaf/border leaf и spine. Underlay-сессии строятся по p2p-адресам `/31` и используются для распространения loopback `/32`, необходимых для VTEP и overlay EVPN.
 
 ## Выводы команд
 
@@ -12,8 +12,8 @@ BGP summary information for VRF default
 Router identifier 10.0.1.1, local AS number 65101
 Neighbor Status Codes: m - Under maintenance
   Neighbor V AS           MsgRcvd   MsgSent  InQ OutQ  Up/Down State   PfxRcd PfxAcc
-  10.2.1.0 4 65001           3843      3855    0    0 02:18:05 Estab   8      8
-  10.2.2.0 4 65001           3859      3870    0    0 02:21:48 Estab   8      8
+  10.2.1.0 4 65001         103156    105116    0    0 01:01:32 Estab   5      5
+  10.2.2.0 4 65001         101948    103640    0    0 01:01:32 Estab   5      5
 le-1#
 
 
@@ -22,8 +22,8 @@ BGP summary information for VRF default
 Router identifier 10.0.1.2, local AS number 65102
 Neighbor Status Codes: m - Under maintenance
   Neighbor V AS           MsgRcvd   MsgSent  InQ OutQ  Up/Down State   PfxRcd PfxAcc
-  10.2.1.2 4 65001           3791      3803    0    0 02:16:41 Estab   8      8
-  10.2.2.2 4 65001           3889      3869    0    0 02:22:11 Estab   8      8
+  10.2.1.2 4 65001           2197      2191    0    0 01:01:50 Estab   5      5
+  10.2.2.2 4 65001           1718      1707    0    0 01:01:50 Estab   5      5
 le-2#
 
 
@@ -32,40 +32,49 @@ BGP summary information for VRF default
 Router identifier 10.0.1.3, local AS number 65103
 Neighbor Status Codes: m - Under maintenance
   Neighbor V AS           MsgRcvd   MsgSent  InQ OutQ  Up/Down State   PfxRcd PfxAcc
-  10.2.1.4 4 65001           3846      3857    0    0 02:18:42 Estab   8      8
-  10.2.2.4 4 65001           3858      3857    0    0 02:22:25 Estab   8      8
+  10.2.1.4 4 65001           9961      9694    0    0 01:02:01 Estab   5      5
+  10.2.2.4 4 65001           9402      9272    0    0 01:02:01 Estab   5      5
 le-3#
 
+le-4#show ip bgp summary
+BGP summary information for VRF default
+Router identifier 10.0.1.5, local AS number 65105
+Neighbor Status Codes: m - Under maintenance
+  Neighbor V AS           MsgRcvd   MsgSent  InQ OutQ  Up/Down State   PfxRcd PfxAcc
+  10.2.1.8 4 65001           2119      2114    0    0 01:02:19 Estab   5      5
+  10.2.2.8 4 65001           1703      1705    0    0 01:02:18 Estab   5      5
+le-4#
 
 bl-1#show ip bgp summary
 BGP summary information for VRF default
 Router identifier 10.0.1.4, local AS number 65104
 Neighbor Status Codes: m - Under maintenance
   Neighbor V AS           MsgRcvd   MsgSent  InQ OutQ  Up/Down State   PfxRcd PfxAcc
-  10.2.1.6 4 65001           2193      2184    0    0 01:25:02 Estab   8      8
-  10.2.2.6 4 65001           2193      2168    0    0 01:25:02 Estab   8      8
+  10.2.1.6 4 65001           1883      1861    0    0 01:01:47 Estab   5      5
+  10.2.2.6 4 65001           1673      1676    0    0 01:01:47 Estab   5      5
 bl-1#
-
-sp-2#show ip bgp summary
-BGP summary information for VRF default
-Router identifier 10.0.2.0, local AS number 65001
-Neighbor Status Codes: m - Under maintenance
-  Neighbor V AS           MsgRcvd   MsgSent  InQ OutQ  Up/Down State   PfxRcd PfxAcc
-  10.2.2.1 4 65101           3376      3391    0    0 02:22:39 Estab   1      1
-  10.2.2.3 4 65102           3374      3398    0    0 02:22:39 Estab   1      1
-  10.2.2.5 4 65103           3380      3390    0    0 02:22:39 Estab   1      1
-  10.2.2.7 4 65104           2004      2023    0    0 01:24:32 Estab   1      1
-sp-2#
-
 
 sp-1#show ip bgp summary
 BGP summary information for VRF default
 Router identifier 10.0.1.0, local AS number 65001
 Neighbor Status Codes: m - Under maintenance
   Neighbor V AS           MsgRcvd   MsgSent  InQ OutQ  Up/Down State   PfxRcd PfxAcc
-  10.2.1.1 4 65101           3313      3307    0    0 02:19:10 Estab   1      1
-  10.2.1.3 4 65102           3267      3267    0    0 02:17:23 Estab   1      1
-  10.2.1.5 4 65103           3318      3318    0    0 02:19:10 Estab   1      1
-  10.2.1.7 4 65104           2023      2028    0    0 01:24:46 Estab   1      1
+  10.2.1.1 4 65101           1478      1480    0    0 01:02:46 Estab   1      1
+  10.2.1.3 4 65102           1480      1477    0    0 01:02:48 Estab   1      1
+  10.2.1.5 4 65103           1492      1484    0    0 01:02:51 Estab   1      1
+  10.2.1.7 4 65104           1452      1471    0    0 01:02:01 Estab   1      1
+  10.2.1.9 4 65105           1487      1487    0    0 01:02:54 Estab   1      1
 sp-1#
+
+sp-2#show ip bgp summary
+BGP summary information for VRF default
+Router identifier 10.0.2.0, local AS number 65001
+Neighbor Status Codes: m - Under maintenance
+  Neighbor V AS           MsgRcvd   MsgSent  InQ OutQ  Up/Down State   PfxRcd PfxAcc
+  10.2.2.1 4 65101           1481      1477    0    0 01:03:01 Estab   1      1
+  10.2.2.3 4 65102           1477      1487    0    0 01:03:03 Estab   1      1
+  10.2.2.5 4 65103           1481      1482    0    0 01:03:06 Estab   1      1
+  10.2.2.7 4 65104           1464      1468    0    0 01:02:16 Estab   1      1
+  10.2.2.9 4 65105           1488      1497    0    0 01:03:08 Estab   1      1
+sp-2#
 ```
