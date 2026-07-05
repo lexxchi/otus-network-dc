@@ -31,9 +31,9 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 
 ![Схема lab-06 с клиентами](img/eve-ng-scheme2.png)
 
-Текущая стадия работы - MVP+: основной DC1 с VXLAN EVPN fabric, border leaf, `vyos-fw`, имитацией ISP на `vyos-isp`, NAT, внешними BGP-фильтрами, MLAG-клиентом, EVPN multihoming-клиентом и отдельным VRF `IDRAC`. Дополнительно подготовлен автономный DC2/POD с OSPF underlay, iBGP EVPN overlay и локальным tenant `TENANT-DC2`.
+Текущая стадия работы - MVP+: основной DC1 с VXLAN EVPN fabric, border leaf, `vyos-fw`, имитацией ISP на `vyos-isp`, NAT, внешними BGP-фильтрами, MLAG-клиентом, EVPN multihoming-клиентом и отдельным VRF `IDRAC`. Дополнительно подготовлен DC2/POD с OSPF underlay, iBGP EVPN overlay, локальным tenant `TENANT-DC2`, border leaf `bl-21` и DCI до DC1. Через DCI растянут VLAN 10, а клиент `cl-44` в DC2 выходит в интернет через centralized gateway/edge в DC1.
 
-![Текущая схема проекта](img/eve-ng-scheme6.png)
+![Текущая схема проекта](img/eve-ng-scheme7.png)
 
 ## Используемые технологии
 
@@ -43,6 +43,8 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | DC2 Underlay | OSPF | IP-достижимость loopback/VTEP внутри второго POD |
 | Overlay control plane | MP-BGP EVPN | Распространение MAC/IP, IMET и IP-prefix маршрутов |
 | DC2 Overlay | iBGP EVPN RR | Spine DC2 работают как route-reflector для leaf DC2 |
+| DCI Underlay | eBGP IPv4 | IP-достижимость loopback/VTEP между border leaf DC1 и DC2 |
+| DCI Overlay | eBGP EVPN | Межплощадочный EVPN control-plane между `bl-1` и `bl-21` |
 | Overlay data plane | VXLAN | Инкапсуляция клиентского L2/L3-трафика |
 | BGP separation | Underlay/Overlay peer-groups | IPv4-сессии по p2p-адресам, EVPN-сессии по Loopback0 |
 | Tenant routing | VRF TENANT-1 | Изоляция клиентских маршрутов |
@@ -63,7 +65,7 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | Устройство | ASN |
 |---|---:|
 | sp-1, sp-2 | 65001 |
-| sp-21, sp-22, le-21, le-22, le-23 | 65200 |
+| sp-21, sp-22, le-21, le-22, le-23, bl-21 | 65200 |
 | le-1 | 65101 |
 | le-2 | 65102 |
 | le-3 | 65103 |
@@ -88,6 +90,7 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | le-21 | 10.0.21.1/32 |
 | le-22 | 10.0.21.2/32 |
 | le-23 | 10.0.21.3/32 |
+| bl-21 | 10.0.21.4/32 |
 
 ### Underlay p2p
 
@@ -111,9 +114,17 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | sp-21 Ethernet1 <-> le-21 Ethernet1 | 10.22.1.0/31 | 10.22.1.1/31 |
 | sp-21 Ethernet2 <-> le-22 Ethernet1 | 10.22.1.2/31 | 10.22.1.3/31 |
 | sp-21 Ethernet3 <-> le-23 Ethernet1 | 10.22.1.4/31 | 10.22.1.5/31 |
+| sp-21 Ethernet4 <-> bl-21 Ethernet1 | 10.22.1.6/31 | 10.22.1.7/31 |
 | sp-22 Ethernet1 <-> le-21 Ethernet2 | 10.22.2.0/31 | 10.22.2.1/31 |
 | sp-22 Ethernet2 <-> le-22 Ethernet2 | 10.22.2.2/31 | 10.22.2.3/31 |
 | sp-22 Ethernet3 <-> le-23 Ethernet2 | 10.22.2.4/31 | 10.22.2.5/31 |
+| sp-22 Ethernet4 <-> bl-21 Ethernet2 | 10.22.2.6/31 | 10.22.2.7/31 |
+
+### DCI p2p
+
+| Link | DC1 IP | DC2 IP | Назначение |
+|---|---|---|---|
+| bl-1 Ethernet5 <-> bl-21 Ethernet5 | 10.255.0.0/31 | 10.255.0.1/31 | DCI eBGP underlay |
 
 ### Tenant-сети
 
@@ -137,8 +148,10 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | cl-3344 | 20 | 192.168.20.44/24 |
 | cl-idrac-1 | 30 | 198.51.100.130/25 |
 | cl-idrac-2 | 30 | 198.51.100.143/25 |
+| cl-44 | 10 | 192.168.10.44/24 |
 | cl-dc2-1 | 210 | 192.168.210.11/24 |
 | cl-dc2-2 | 210 | 192.168.210.12/24 |
+| cl-dc2-3 | 210 | 192.168.210.13/24 |
 
 `cl-1122` - VyOS-клиент для демонстрационных проверок. Он подключен к `le-1` и `le-2` через LACP bond `bond0`, использует gateway `192.168.20.1` и может применяться для `curl`/`iperf3` в презентации.
 
@@ -268,19 +281,21 @@ router bgp 65101
 
 ## DC2 / POD на OSPF underlay
 
-Второй POD подготовлен как автономный fabric для следующего этапа диплома. Сейчас он не связан с DC1 и внешним контуром, а используется для отработки отдельной leaf-spine сети с другим underlay-подходом.
+Второй POD подготовлен и проверен как отдельный fabric с другим underlay-подходом. После автономной проверки DC2 был связан с DC1 через DCI между `bl-1` и `bl-21`.
 
 Состав DC2:
 
 - `sp-21` и `sp-22` - spine и route-reflector для EVPN overlay
 - `le-21`, `le-22`, `le-23` - leaf/VTEP
-- `cl-dc2-1` и `cl-dc2-2` - клиенты в VLAN 210
+- `bl-21` - border leaf DC2 для будущего DCI и внешнего контура
+- `cl-dc2-1`, `cl-dc2-2` и `cl-dc2-3` - клиенты в локальном VLAN 210
+- `cl-44` - клиент в VLAN 10, растянутом из DC1 через DCI
 
 Underlay DC2 построен на OSPF area 0. Между spine и leaf используются L3 p2p-сети `/31`, а `Loopback0` каждого устройства является стабильным адресом для VTEP, BGP router-id и overlay-соседств. На p2p-интерфейсах включен OSPF point-to-point и BFD.
 
 Изначальная идея состояла в том, чтобы в OSPF распространять только loopback-адреса и не показывать p2p-сети в маршрутной таблице. В текущей версии vEOS команда `ip ospf prefix-suppression` не поддержалась, поэтому в конфигурации она не используется. При этом overlay всё равно строится только по `Loopback0`, а p2p-сети остаются служебной underlay-адресацией.
 
-Overlay DC2 построен на iBGP EVPN в AS `65200`. Spine `sp-21` и `sp-22` выступают route-reflector, leaf являются RR-client. Прямое EVPN-соседство между spine не требуется: каждый spine принимает EVPN-маршруты от leaf и отражает их другим leaf в рамках своей RR-функции.
+Overlay DC2 построен на iBGP EVPN в AS `65200`. Spine `sp-21` и `sp-22` выступают route-reflector, leaf и `bl-21` являются RR-client. Прямое EVPN-соседство между spine не требуется: каждый spine принимает EVPN-маршруты от leaf/border leaf и отражает их другим VTEP в рамках своей RR-функции.
 
 ```text
 router bgp 65200
@@ -304,6 +319,30 @@ interface Vlan210
 interface Vxlan1
    vxlan vlan 210 vni 10210
    vxlan vrf TENANT-DC2 vni 50200
+```
+
+Автономная работа DC2 подтверждена проверками OSPF underlay, iBGP EVPN overlay и клиентской связности. Результаты сохранены в [checks/dc2/underlay.md](checks/dc2/underlay.md), [checks/dc2/overlay.md](checks/dc2/overlay.md) и [checks/dc2/pings.md](checks/dc2/pings.md).
+
+`bl-21` добавлен в DC2 как border leaf: он подключен к `sp-21` и `sp-22` через OSPF underlay, имеет VTEP/Loopback0 `10.0.21.4/32`, участвует в iBGP EVPN overlay и подключен к `TENANT-DC2`. Через `bl-21` построен DCI до `bl-1`.
+
+## DCI между DC1 и DC2
+
+DCI сделан отдельным контуром между border leaf `bl-1` и `bl-21`.
+
+- Underlay DCI - eBGP IPv4 по p2p-сети `10.255.0.0/31`.
+- Overlay DCI - eBGP EVPN между `Loopback0` `10.0.1.4/32` и `10.0.21.4/32`.
+- На `bl-21` используются prefix-list и route-map для обмена VTEP loopback между OSPF underlay DC2 и DCI BGP.
+- Первый tenant-сценарий через DCI - L2 stretch VLAN 10/L2VNI 10010 из DC1 в DC2.
+
+```text
+bl-1 Ethernet5 10.255.0.0/31 <-> 10.255.0.1/31 bl-21 Ethernet5
+bl-1 Loopback0 10.0.1.4/32  <-> 10.0.21.4/32 bl-21 Loopback0
+```
+
+На этом этапе `TENANT-1` в DC2 используется как L2 stretch для VLAN 10 без локального L3VNI/SVI на `le-22`. Клиент `cl-44` физически находится в DC2, но использует gateway `192.168.10.1` и anycast MAC `00:00:be:ef:ca:fe` из DC1. Поэтому его выход в интернет идет централизованно через DC1:
+
+```text
+cl-44 -> L2VNI 10010 через DCI -> DC1 anycast gateway -> TENANT-1 -> bl-1 -> vyos-fw -> NAT -> vyos-isp
 ```
 
 ## Tenant VRF и Anycast Gateway
@@ -409,7 +448,7 @@ IDRAC-сеть намеренно не закрыта на `vyos-fw` белым 
 
 ### Underlay
 
-Результаты базовой проверки сохранены в [checks/underlay.md](checks/underlay.md). По выводам `show ip bgp summary` все leaf и `bl-1` имеют established IPv4-соседства со spine по p2p-адресам. На spine в IPv4 BGP RIB присутствуют только loopback `/32`, p2p-сети `/31` не распространяются.
+Результаты базовой проверки сохранены в [checks/dc1/underlay.md](checks/dc1/underlay.md). По выводам `show ip bgp summary` все leaf и `bl-1` имеют established IPv4-соседства со spine по p2p-адресам. На spine в IPv4 BGP RIB присутствуют только loopback `/32`, p2p-сети `/31` не распространяются.
 
 ```text
 show ip bgp summary
@@ -417,7 +456,7 @@ show ip bgp summary
 
 ### Overlay
 
-Результаты проверки сохранены в [checks/overlay.md](checks/overlay.md). EVPN-соседства находятся в состоянии `Estab` и строятся по loopback-адресам: leaf видит spine `10.0.1.0`/`10.0.2.0`, а spine видит leaf/border leaf `10.0.1.1`-`10.0.1.5`. В EVPN присутствуют MAC/IP routes Type-2, IMET routes Type-3 и маршруты для multihomed клиента `192.168.20.44`.
+Результаты проверки сохранены в [checks/dc1/overlay.md](checks/dc1/overlay.md). EVPN-соседства находятся в состоянии `Estab` и строятся по loopback-адресам: leaf видит spine `10.0.1.0`/`10.0.2.0`, а spine видит leaf/border leaf `10.0.1.1`-`10.0.1.5`. В EVPN присутствуют MAC/IP routes Type-2, IMET routes Type-3 и маршруты для multihomed клиента `192.168.20.44`.
 
 ```text
 show bgp evpn summary
@@ -427,7 +466,7 @@ show bgp evpn route-type imet
 
 ### Tenant routing
 
-Проверка tenant routing также сохранена в [checks/overlay.md](checks/overlay.md). На `le-1` default route установлен в `VRF TENANT-1` через VTEP `10.0.1.4`, L3VNI `50000`, то есть через border leaf `bl-1`.
+Проверка tenant routing также сохранена в [checks/dc1/overlay.md](checks/dc1/overlay.md). На `le-1` default route установлен в `VRF TENANT-1` через VTEP `10.0.1.4`, L3VNI `50000`, то есть через border leaf `bl-1`.
 
 ```text
 show ip route vrf TENANT-1
@@ -437,21 +476,65 @@ show ip route vrf TENANT-1
 
 ### External BGP, firewall и NAT
 
-Результаты внешнего BGP сохранены в [checks/external-bgp.md](checks/external-bgp.md). В файле зафиксированы established BGP-сессии `vyos-fw` с `vyos-isp` и `bl-1`, а также проверка advertised-routes в сторону `vyos-isp`: наружу анонсируется только `192.0.2.0/24`.
+Результаты внешнего BGP сохранены в [checks/dc1/external-bgp.md](checks/dc1/external-bgp.md). В файле зафиксированы established BGP-сессии `vyos-fw` с `vyos-isp` и `bl-1`, а также проверка advertised-routes в сторону `vyos-isp`: наружу анонсируется только `192.0.2.0/24`.
 
-В [checks/external-bgp.md](checks/external-bgp.md) также сохранен вывод received-routes от `vyos-isp`: `0.0.0.0/0`, `1.1.1.1/32`, `8.8.8.8/32` и `192.0.2.0/24`.
+В [checks/dc1/external-bgp.md](checks/dc1/external-bgp.md) также сохранен вывод received-routes от `vyos-isp`: `0.0.0.0/0`, `1.1.1.1/32`, `8.8.8.8/32` и `192.0.2.0/24`.
 
-Проверка firewall сохранена в [checks/firewall.md](checks/firewall.md). С `vyos-isp` проверено, что TCP/179 на `198.51.100.1` доступен, а TCP/22 на `198.51.100.1` недоступен.
+Проверка firewall сохранена в [checks/dc1/firewall.md](checks/dc1/firewall.md). С `vyos-isp` проверено, что TCP/179 на `198.51.100.1` доступен, а TCP/22 на `198.51.100.1` недоступен.
 
 ### MLAG и EVPN multihoming
 
-Проверка MLAG сохранена в [checks/mlag.md](checks/mlag.md). В файле зафиксированы `show mlag interfaces` и `show mlag` на `le-1`/`le-2`: MLAG domain `LEAVES-1-2` находится в состоянии `Active`, peer-link поднят, клиентский `Port-Channel55` для `cl-1122` находится в `active-full`.
+Проверка MLAG сохранена в [checks/dc1/mlag.md](checks/dc1/mlag.md). В файле зафиксированы `show mlag interfaces` и `show mlag` на `le-1`/`le-2`: MLAG domain `LEAVES-1-2` находится в состоянии `Active`, peer-link поднят, клиентский `Port-Channel55` для `cl-1122` находится в `active-full`.
 
-Проверка EVPN multihoming сохранена в [checks/multihoming.md](checks/multihoming.md). В файле зафиксированы состояние `Port-Channel5` на `le-3`/`le-4`, работа `link tracking group CORE-TRACKING`, EVPN route-type 1 auto-discovery routes, EVPN route-type 4 ethernet-segment routes, состояние LACP bond на `cl-3344`, а также проверки `curl`, `ping` и `iperf3` до `8.8.8.8`.
+Проверка EVPN multihoming сохранена в [checks/dc1/multihoming.md](checks/dc1/multihoming.md). В файле зафиксированы состояние `Port-Channel5` на `le-3`/`le-4`, работа `link tracking group CORE-TRACKING`, EVPN route-type 1 auto-discovery routes, EVPN route-type 4 ethernet-segment routes, состояние LACP bond на `cl-3344`, а также проверки `curl`, `ping` и `iperf3` до `8.8.8.8`.
 
 ### VRF IDRAC
 
-Проверка VRF `IDRAC` сохранена в [checks/VRF IDRAC.md](checks/VRF%20IDRAC.md). В файле зафиксированы ARP-записи `cl-idrac-1` и `cl-idrac-2` на `bl-1`, ping/traceroute от IDRAC-клиентов до `8.8.8.8`, ping/traceroute от `cl-3344` до `198.51.100.143`, а также `tcpdump` на `vyos-isp`, подтверждающий прохождение traffic path через внешний контур.
+Проверка VRF `IDRAC` сохранена в [checks/dc1/VRF IDRAC.md](checks/dc1/VRF%20IDRAC.md). В файле зафиксированы ARP-записи `cl-idrac-1` и `cl-idrac-2` на `bl-1`, ping/traceroute от IDRAC-клиентов до `8.8.8.8`, ping/traceroute от `cl-3344` до `198.51.100.143`, а также `tcpdump` на `vyos-isp`, подтверждающий прохождение traffic path через внешний контур.
+
+### DC2 / автономный POD
+
+Проверки автономного DC2 сохранены в [checks/dc2/underlay.md](checks/dc2/underlay.md), [checks/dc2/overlay.md](checks/dc2/overlay.md) и [checks/dc2/pings.md](checks/dc2/pings.md).
+
+В underlay проверены OSPF-соседства между spine `sp-21`/`sp-22` и leaf `le-21`/`le-22`/`le-23`. Все сохраненные соседства находятся в состоянии `FULL`, что подтверждает IP-достижимость внутри OSPF area 0.
+
+```text
+show ip ospf neighbor
+```
+
+В overlay проверены iBGP EVPN-соседства: spine `sp-21` и `sp-22` видят leaf `10.0.21.1`, `10.0.21.2`, `10.0.21.3` и border leaf `10.0.21.4`, а leaf видят оба spine route-reflector `10.0.21.0` и `10.0.22.0`. В EVPN RIB присутствуют MAC/IP routes клиентов `192.168.210.11`, `192.168.210.12`, `192.168.210.13`, IMET routes для VNI 10210 и IP-prefix routes `192.168.210.0/24` для L3VNI 50200.
+
+```text
+show bgp evpn summary
+show bgp evpn
+```
+
+На data plane проверены ping между `cl-dc2-1`, `cl-dc2-2`, `cl-dc2-3`, а также доступ клиента до anycast gateway `192.168.210.1`.
+
+```text
+cl-dc2-1> ping 192.168.210.12
+cl-dc2-2> ping 192.168.210.1
+cl-dc2-2> ping 192.168.210.11
+cl-dc2-3> ping 192.168.210.11
+```
+
+### DCI и VLAN 10 через DCI
+
+Проверка DCI overlay сохранена в [checks/dci-overlay.md](checks/dci-overlay.md). В файле зафиксированы established BGP IPv4-соседства по DCI p2p-сети `10.255.0.0/31` и established EVPN-соседство между `bl-1` и `bl-21` по loopback-адресам.
+
+```text
+show ip bgp summary
+show bgp evpn summary
+show bgp evpn
+```
+
+Проверка VLAN 10 через DCI сохранена в [checks/dci-ping vlan 10.md](checks/dci-ping%20vlan%2010.md). На `cl-44` в DC2 проверены ARP gateway `192.168.10.1`, ping до клиента DC1 `192.168.10.12` и ping до `8.8.8.8`. Это подтверждает L2 stretch VLAN 10 и centralized internet breakout через DC1.
+
+```text
+cl-44> show arp
+cl-44> ping 192.168.10.12
+cl-44> ping 8.8.8.8
+```
 
 ### Data plane
 
@@ -468,8 +551,13 @@ show ip route vrf TENANT-1
 | cl-idrac-1 -> 8.8.8.8 | IDRAC-клиент выходит наружу через VRF `IDRAC` и `vyos-fw` |
 | cl-idrac-2 -> 8.8.8.8 | IDRAC-клиент через VXLAN L2VNI 10030 выходит наружу через `bl-1` |
 | cl-3344 -> 198.51.100.143 | Production-клиент достигает IDRAC public prefix через внешний контур |
+| cl-dc2-1 -> 192.168.210.12 | Связность клиентов внутри автономного DC2 работает |
+| cl-dc2-2 -> 192.168.210.1 | Anycast gateway VLAN 210 в DC2 доступен |
+| cl-dc2-3 -> 192.168.210.11 | Клиент за `bl-21` достигает клиента за leaf DC2 |
+| cl-44 -> 192.168.10.12 | VLAN 10 растянут между DC1 и DC2 через DCI |
+| cl-44 -> 8.8.8.8 | Клиент DC2 выходит в интернет через gateway и edge DC1 |
 
-Результаты ping и trace сохранены в [checks/pings.md](checks/pings.md), [checks/trace.md](checks/trace.md) и [checks/VRF IDRAC.md](checks/VRF%20IDRAC.md).
+Результаты ping и trace сохранены в [checks/dc1/pings.md](checks/dc1/pings.md), [checks/dc1/trace.md](checks/dc1/trace.md), [checks/dc1/VRF IDRAC.md](checks/dc1/VRF%20IDRAC.md), [checks/dc2/pings.md](checks/dc2/pings.md) и [checks/dci-ping vlan 10.md](checks/dci-ping%20vlan%2010.md).
 
 ## Что реализовано сейчас
 
@@ -487,11 +575,14 @@ show ip route vrf TENANT-1
 - Добавлены IDRAC-клиенты `cl-idrac-1` и `cl-idrac-2`.
 - Разделены BGP underlay и overlay: IPv4 underlay работает по p2p-соседствам, EVPN overlay работает по `Loopback0`.
 - В IPv4 underlay анонсируются только loopback `/32`; p2p `/31` не попадают в BGP RIB.
-- Подготовлен автономный DC2/POD: `sp-21`, `sp-22`, `le-21`, `le-22`, `le-23`.
+- Подготовлен и проверен автономный DC2/POD: `sp-21`, `sp-22`, `le-21`, `le-22`, `le-23`, `bl-21`.
 - В DC2 underlay построен на OSPF area 0, overlay - на iBGP EVPN с `sp-21`/`sp-22` как route-reflector.
-- В DC2 добавлен локальный VRF `TENANT-DC2`, VLAN 210, L2VNI 10210, L3VNI 50200 и клиенты `cl-dc2-1`/`cl-dc2-2`.
+- В DC2 добавлен border leaf `bl-21` с VTEP `10.0.21.4/32` для будущего DCI.
+- В DC2 добавлен локальный VRF `TENANT-DC2`, VLAN 210, L2VNI 10210, L3VNI 50200 и клиенты `cl-dc2-1`/`cl-dc2-2`/`cl-dc2-3`.
+- Построен DCI между `bl-1` и `bl-21`: eBGP IPv4 underlay по `10.255.0.0/31` и eBGP EVPN overlay по loopback.
+- VLAN 10 из `TENANT-1` растянут в DC2 как L2VNI 10010; клиент `cl-44` в DC2 пингует клиента DC1 и `8.8.8.8` через centralized gateway/edge в DC1.
 - Настроены firewall policy на внешнем интерфейсе `vyos-fw`, route-map для анонса наружу только public `/24` и route-map для отдачи внутрь fabric только default route.
-- Собраны проверки underlay, overlay, external BGP, firewall, MLAG, EVPN multihoming, VRF IDRAC, ping и trace в [checks](checks/).
+- Собраны проверки underlay, overlay, external BGP, firewall, MLAG, EVPN multihoming, VRF IDRAC, DC2, ping и trace в [checks](checks/).
 
 ## Изменения для cl-1122 и MLAG
 
@@ -634,11 +725,12 @@ vyos@cl-3344:~$ traceroute 198.51.100.143
 - Используются два VRF: `TENANT-1` для production-сетей и `IDRAC` для OOB/iDRAC.
 - EVPN multihoming добавлен и базово проверен для одного клиента. Для финальной защиты можно дополнительно расширить проверки отказа полного leaf, если останется время.
 - Резервирование border leaf не входит в MVP.
-- DC2/POD подготовлен автономно, но DCI между DC1 и DC2 пока не настроен.
-- Выход DC2 в интернет пока не настроен.
+- DCI между DC1 и DC2 построен одним линком без резервирования.
+- Для `TENANT-1` в DC2 пока проверен L2 stretch VLAN 10 без локального L3VNI/SVI.
+- Выход `cl-44` в интернет работает централизованно через DC1; отдельный local breakout в DC2 пока не настроен.
 - Underlay в DC1 остается на BGP, underlay в DC2 подготовлен на OSPF.
 - IDRAC public prefix намеренно доступен из имитированного интернета без whitelist на `vyos-fw`, чтобы наглядно показать внешний путь трафика.
-- Текущее состояние фиксирует VXLAN EVPN fabric в DC1, внешний edge, NAT, фильтрацию, MLAG, EVPN multihoming, отдельный IDRAC VRF и автономный DC2/POD. DCI и дополнительные сервисы будут добавляться поверх этого состояния.
+- Текущее состояние фиксирует VXLAN EVPN fabric в DC1, внешний edge, NAT, фильтрацию, MLAG, EVPN multihoming, отдельный IDRAC VRF, DC2/POD, border leaf `bl-21`, DCI и L2 stretch VLAN 10 между площадками.
 
 ## Возможные расширения
 
@@ -649,7 +741,7 @@ vyos@cl-3344:~$ traceroute 198.51.100.143
 
 ### Доработка DC2 и DCI
 
-Довести второй POD до межплощадочного сценария: добавить border leaf в DC2, связать DC1 и DC2 через eBGP EVPN между border leaf, растянуть `TENANT-1` между площадками и после этого подключить DC2 к внешнему контуру.
+Развить межплощадочный сценарий: добавить резервный DCI path, расширить проверки отказов, при необходимости добавить local breakout или отдельный внешний edge в DC2.
 
 ### Резервирование выхода наружу
 
