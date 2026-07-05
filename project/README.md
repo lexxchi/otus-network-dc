@@ -2,7 +2,7 @@
 
 ## Цель проекта
 
-Разработать и смоделировать сеть датацентра на базе архитектуры leaf-spine с использованием VXLAN EVPN. В минимальном варианте проект должен обеспечить L2-связность внутри клиентских VLAN, L3-маршрутизацию между VLAN через L3VNI, распределенный шлюз Anycast Gateway и выход tenant-сетей во внешний сегмент через border leaf и VyOS router/firewall с NAT.
+Разработать и смоделировать сеть датацентра на базе архитектуры leaf-spine с использованием VXLAN EVPN. Итоговый стенд должен обеспечить L2-связность внутри клиентских VLAN, L3-маршрутизацию между VLAN через L3VNI, распределенный шлюз Anycast Gateway, выход tenant-сетей во внешний сегмент через border leaf и VyOS router/firewall с NAT, а также показать развитие архитектуры до multihoming, отдельного OOB/iDRAC VRF, второго POD/DC и DCI.
 
 ## Постановка задачи
 
@@ -10,20 +10,21 @@
 
 VXLAN EVPN позволяет отделить физическую underlay-сеть от логической overlay-сети. Underlay отвечает за IP-достижимость между VTEP, а overlay предоставляет клиентские L2/L3-сервисы поверх fabric. Такой подход упрощает масштабирование, позволяет использовать ECMP в leaf-spine топологии и дает основу для дальнейшего расширения: multihoming, border redundancy, DCI и второго датацентра.
 
-## Минимальный стенд
+## Итоговый стенд
 
-В минимальной реализации используется один датацентр:
+Проект начинался с минимальной схемы на базе lab-06, но финальная версия расширена до двух площадок с DCI, несколькими tenant-сегментами, отказоустойчивыми подключениями клиентов и внешними VyOS edge-устройствами:
 
 | Роль | Количество | Назначение |
 |---|---:|---|
-| Spine | 2 | Underlay/overlay transport, BGP EVPN peering |
-| Leaf | 4 | Подключение клиентов, VTEP, Anycast Gateway, MLAG/EVPN multihoming |
-| Border Leaf | 1 | Выход tenant VRF во внешний контур |
-| VyOS FW | 1 | External router/firewall, NAT, имитация ISP edge |
-| Клиентские VLAN | 3 | Пользовательские и OOB/iDRAC L2-сегменты |
-| Tenant VRF | 2 | L3-изоляция production и IDRAC-сетей |
+| Spine | 4 | 2 spine в DC1 и 2 spine в DC2 |
+| Leaf | 7 | 4 leaf в DC1 и 3 leaf в DC2 |
+| Border Leaf | 2 | `bl-1` для DC1 edge/DCI и `bl-21` для DC2/DCI |
+| VyOS FW | 2 | `vyos-fw` для DC1, `vyos-fw-dc2` для DC2 |
+| ISP | 1 | `vyos-isp` как имитация внешнего оператора/интернета |
+| Клиентские VLAN | 4 | VLAN 10/20 tenant1, VLAN 30 IDRAC, VLAN 210 DC2 tenant2 |
+| Tenant VRF | 3 | `TENANT-1`, `IDRAC`, `TENANT-DC2` |
 
-Базовая часть fabric взята из лабораторной работы lab-06 и доработана в проектных конфигах: [configs/bare-metal](configs/bare-metal/) и [configs/clients](configs/clients/). Данное состояние проекта является MVP с уже добавленными элементами отказоустойчивого подключения клиентов.
+Базовая часть fabric взята из лабораторной работы lab-06 и затем последовательно расширялась: border leaf, VyOS edge, MLAG, EVPN multihoming, отдельный VRF IDRAC, второй DC/POD, DCI и L2 stretch VLAN 10. Актуальные конфигурации находятся в [configs/bare-metal](configs/bare-metal/) и [configs/clients](configs/clients/).
 
 ## Логическая схема
 
@@ -31,9 +32,9 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 
 ![Схема lab-06 с клиентами](img/eve-ng-scheme2.png)
 
-Текущая стадия работы - MVP+: основной DC1 с VXLAN EVPN fabric, border leaf, `vyos-fw`, имитацией ISP на `vyos-isp`, NAT, внешними BGP-фильтрами, MLAG-клиентом, EVPN multihoming-клиентом и отдельным VRF `IDRAC`. Дополнительно подготовлен DC2/POD с OSPF underlay, iBGP EVPN overlay, локальным tenant `TENANT-DC2`, border leaf `bl-21` и DCI до DC1. Через DCI растянут VLAN 10, а клиент `cl-44` в DC2 выходит в интернет через centralized gateway/edge в DC1.
+Финальная стадия проекта: основной DC1 с VXLAN EVPN fabric, border leaf, `vyos-fw`, имитацией ISP на `vyos-isp`, NAT, внешними BGP-фильтрами, MLAG-клиентом, EVPN multihoming-клиентом и отдельным VRF `IDRAC`. Дополнительно собран DC2/POD с OSPF underlay, iBGP EVPN overlay, локальным tenant `TENANT-DC2`, border leaf `bl-21` и DCI до DC1. Через DCI растянут VLAN 10, а клиент `cl-44` в DC2 выходит в интернет через centralized gateway/edge в DC1.
 
-![Текущая схема проекта](img/eve-ng-scheme7.png)
+![Текущая схема проекта](img/eve-ng-scheme8.png)
 
 ## Используемые технологии
 
@@ -54,6 +55,7 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | Gateway | Anycast Gateway | Единый шлюз VLAN на всех leaf |
 | Edge | VyOS NAT | Выход tenant-сетей во внешний сегмент |
 | Filtering | VyOS firewall, prefix-list, route-map | Ограничение входящего доступа и коррекция BGP-анонсов |
+| Custom anycast MAC | `00:00:be:ef:ca:fe`, `00:00:be:ef:dc:02` | Раздельные virtual-router MAC для DC1 и DC2 |
 | Client HA | MLAG + LACP | Dual-homed подключение `cl-1122` к паре `le-1`/`le-2` |
 | Client HA | EVPN multihoming / ESI-LAG | Dual-homed подключение `cl-3344` к `le-3`/`le-4` без MLAG |
 | Failure handling | Link Tracking | Отслеживание uplink/downlink на leaf для отказоустойчивых клиентских портов |
@@ -72,6 +74,7 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | bl-1 | 65104 |
 | le-4 | 65105 |
 | vyos-fw | 64497 |
+| vyos-fw-dc2 | 64498 |
 | vyos-isp | 64496 |
 
 ### Loopback
@@ -92,7 +95,7 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | le-23 | 10.0.21.3/32 |
 | bl-21 | 10.0.21.4/32 |
 
-### Underlay p2p
+### DC1 underlay p2p
 
 | Link | Spine IP | Leaf IP |
 |---|---|---|
@@ -172,9 +175,10 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | Link | Адресация | Назначение |
 |---|---|---|
 | bl-1 Ethernet3 <-> vyos-fw eth0 | trunk VLAN 100,130 | Общий физический trunk до external router/firewall |
-| VLAN 100 transit | 203.0.113.0/30 | Transit из `TENANT-1` до `vyos-fw` |
-| VLAN 130 transit | 203.0.113.4/30 | Transit из `IDRAC` до `vyos-fw` |
-| vyos-fw eth1 <-> vyos-isp eth0 | 198.51.100.0/30 | Имитация внешнего ISP-сегмента |
+| VLAN 100 transit | 203.0.113.0/30 | Transit из TENANT-1 до vyos-fw |
+| VLAN 130 transit | 203.0.113.4/30 | Transit из IDRAC до vyos-fw |
+| vyos-fw eth1 <-> vyos-isp eth0 | 198.51.100.0/30 | Имитация внешнего ISP-сегмента DC1 |
+| vyos-fw-dc2 eth1 <-> vyos-isp eth1 | 198.51.100.4/30 | Имитация внешнего ISP-сегмента DC2 |
 | DC public prefix | 192.0.2.0/24 | Публичная IPv4-сеть ДЦ, анонсируемая в сторону ISP |
 | IDRAC public prefix | 198.51.100.128/25 | Публичная iDRAC/OOB-сеть, анонсируемая в сторону ISP |
 | vyos-fw lo | 192.0.2.1/32 | Service public address из сети ДЦ |
@@ -182,6 +186,7 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | vyos-isp lo | 8.8.8.8/32, 1.1.1.1/32 | Имитация интернет |
 | NAT source VLAN 10 | 192.168.10.0/24 | Source NAT в 192.0.2.10 на vyos-fw |
 | NAT source VLAN 20 | 192.168.20.0/24 | Source NAT в 192.0.2.20 на vyos-fw |
+| NAT source VLAN 210 | 192.168.210.0/24 | Source NAT в 198.51.100.5 на vyos-fw-dc2 |
 
 ### OOB/iDRAC-сеть
 
@@ -193,9 +198,9 @@ VXLAN EVPN позволяет отделить физическую underlay-с�
 | cl-idrac-1 | 198.51.100.130/25 | iDRAC-клиент напрямую на `bl-1` |
 | cl-idrac-2 | 198.51.100.143/25 | iDRAC-клиент через VXLAN fabric на `le-3` |
 
-## Underlay
+## DC1 Underlay
 
-Underlay построен на eBGP между leaf и spine. Все межкоммутаторные соединения являются L3 p2p-линками с адресацией `/31`. Underlay BGP-сессии поднимаются по p2p-адресам и используются только для распространения loopback `/32`, необходимых для VTEP и overlay BGP.
+DC1 underlay построен на eBGP между leaf и spine. Все межкоммутаторные соединения являются L3 p2p-линками с адресацией `/31`. Underlay BGP-сессии поднимаются по p2p-адресам и используются только для распространения loopback `/32`, необходимых для VTEP и overlay BGP.
 
 `Loopback0` используется как VTEP source-interface для VXLAN, BGP router-id и source-interface для overlay EVPN-сессий. P2P-сети `/31` не распространяются в BGP RIB через `redistribute connected`; вместо этого на каждом устройстве явно анонсируется только свой loopback через `network <loopback>/32`.
 
@@ -287,15 +292,13 @@ router bgp 65101
 
 - `sp-21` и `sp-22` - spine и route-reflector для EVPN overlay
 - `le-21`, `le-22`, `le-23` - leaf/VTEP
-- `bl-21` - border leaf DC2 для будущего DCI и внешнего контура
+- `bl-21` - border leaf DC2 для DCI и внешнего контура
 - `cl-dc2-1`, `cl-dc2-2` и `cl-dc2-3` - клиенты в локальном VLAN 210
 - `cl-44` - клиент в VLAN 10, растянутом из DC1 через DCI
 
 Underlay DC2 построен на OSPF area 0. Между spine и leaf используются L3 p2p-сети `/31`, а `Loopback0` каждого устройства является стабильным адресом для VTEP, BGP router-id и overlay-соседств. На p2p-интерфейсах включен OSPF point-to-point и BFD.
 
-Изначальная идея состояла в том, чтобы в OSPF распространять только loopback-адреса и не показывать p2p-сети в маршрутной таблице. В текущей версии vEOS команда `ip ospf prefix-suppression` не поддержалась, поэтому в конфигурации она не используется. При этом overlay всё равно строится только по `Loopback0`, а p2p-сети остаются служебной underlay-адресацией.
-
-Overlay DC2 построен на iBGP EVPN в AS `65200`. Spine `sp-21` и `sp-22` выступают route-reflector, leaf и `bl-21` являются RR-client. Прямое EVPN-соседство между spine не требуется: каждый spine принимает EVPN-маршруты от leaf/border leaf и отражает их другим VTEP в рамках своей RR-функции.
+Overlay DC2 построен на iBGP EVPN в AS `65200`. Spine `sp-21` и `sp-22` выступают route-reflector, а `le-21`, `le-22`, `le-23` и `bl-21` являются RR-client. Прямое EVPN-соседство между spine не требуется: каждый spine принимает EVPN-маршруты от leaf/border leaf и отражает их другим VTEP в рамках своей RR-функции.
 
 ```text
 router bgp 65200
@@ -374,6 +377,8 @@ router bgp 65101
       redistribute connected
 ```
 
+Для anycast gateway в DC1 используется кастомный MAC `00:00:be:ef:ca:fe` (`beef:cafe`). В DC2 для локального tenant `TENANT-DC2` используется отдельный MAC `00:00:be:ef:dc:02`, чтобы визуально разделить gateway разных площадок.
+
 ## Border Leaf и внешний контур
 
 Border leaf добавлен как обычный leaf fabric:
@@ -389,14 +394,14 @@ Border leaf добавлен как обычный leaf fabric:
 
 | VRF | VLAN | bl-1 | vyos-fw | Назначение |
 |---|---:|---|---|---|
-| TENANT-1 | 100 | 203.0.113.1/30 | 203.0.113.2/30 | Production transit |
+| TENANT-1 | 100 | 203.0.113.1/30 | 203.0.113.2/30 | tenant1 transit |
 | IDRAC | 130 | 203.0.113.5/30 | 203.0.113.6/30 | OOB/iDRAC transit |
 
 `vyos-fw` отдает default route в сторону `bl-1` отдельно для `TENANT-1` и `IDRAC`. На `vyos-fw` эти сегменты также разнесены по VRF `TENANT-1` и `IDRAC`, а выход в сторону `vyos-isp` выполняется через route leaking в default/global table.
 
 В сторону fabric применяется route-map `export-to-dc`: во внутренние VRF отдается только `0.0.0.0/0`. Публичный префикс ДЦ и внешние маршруты ISP внутрь tenant VRF не анонсируются.
 
-Планируемый путь внешнего трафика:
+Путь внешнего трафика DC1:
 
 ```text
 client -> local leaf -> L3VNI TENANT-1 -> bl-1 -> vyos-fw -> NAT -> vyos-isp loopback
@@ -440,9 +445,11 @@ IDRAC-сеть намеренно не закрыта на `vyos-fw` белым 
 - static routes из default/global table обратно в `TENANT-1` и `IDRAC`
 - проверка прохождения трафика из tenant-сетей до loopback-адресов `vyos-isp`.
 
-`vyos-isp` имитирует внешний интернет. Для проверки на нем настроены loopback-адреса `8.8.8.8/32` и `1.1.1.1/32`, которые анонсируются в сторону `vyos-fw` вместе с default route.
+`vyos-isp` имитирует внешний интернет: на нем подняты loopback-адреса `8.8.8.8/32` и `1.1.1.1/32`, web-сервер и iperf3-сервер. Loopback-адреса анонсируются в сторону `vyos-fw` вместе с default route, а прикладные сервисы запускаются через `simple-http.service` и `iperf3.service`.
 
 Снаружи применяется firewall `OUTSIDE-LOCAL`, повешенный на входящий трафик интерфейса `eth1`. Он разрешает BGP только от `vyos-isp`, SSH только из public-сети ДЦ `192.0.2.0/24`, ICMP для диагностики и established/related трафик. Остальной входящий control-plane трафик на `vyos-fw` с внешнего сегмента отбрасывается.
+
+Для DC2 добавлен отдельный `vyos-fw-dc2`. Он использует AS `64498`, внешний линк к `vyos-isp` через `198.51.100.4/30`, NAT для `192.168.210.0/24` в адрес `198.51.100.5` и VRF `TENANT-DC2` для транзита к `bl-21`.
 
 ## Проверка связности
 
@@ -471,8 +478,6 @@ show bgp evpn route-type imet
 ```text
 show ip route vrf TENANT-1
 ```
-
-На текущей версии vEOS команда `show bgp evpn route-type ip-prefix` не показала маршруты, хотя default route корректно установлен в VRF RIB. Для подтверждения L3VNI-маршрутизации в этом стенде используются `show ip route vrf TENANT-1`, EVPN summary, IMET/MAC-IP routes и end-to-end проверки трафика. При необходимости дополнительно можно проверить вариант команды с явным AFI IPv4: `show bgp evpn route-type ip-prefix ipv4`.
 
 ### External BGP, firewall и NAT
 
@@ -550,7 +555,7 @@ cl-44> ping 8.8.8.8
 | cl-33 -> 192.168.10.11 | Trace до клиента в VLAN 10 доходит до целевого VPCS |
 | cl-idrac-1 -> 8.8.8.8 | IDRAC-клиент выходит наружу через VRF `IDRAC` и `vyos-fw` |
 | cl-idrac-2 -> 8.8.8.8 | IDRAC-клиент через VXLAN L2VNI 10030 выходит наружу через `bl-1` |
-| cl-3344 -> 198.51.100.143 | Production-клиент достигает IDRAC public prefix через внешний контур |
+| cl-3344 -> 198.51.100.143 | tenant1-клиент достигает IDRAC public prefix через внешний контур |
 | cl-dc2-1 -> 192.168.210.12 | Связность клиентов внутри автономного DC2 работает |
 | cl-dc2-2 -> 192.168.210.1 | Anycast gateway VLAN 210 в DC2 доступен |
 | cl-dc2-3 -> 192.168.210.11 | Клиент за `bl-21` достигает клиента за leaf DC2 |
@@ -559,26 +564,27 @@ cl-44> ping 8.8.8.8
 
 Результаты ping и trace сохранены в [checks/dc1/pings.md](checks/dc1/pings.md), [checks/dc1/trace.md](checks/dc1/trace.md), [checks/dc1/VRF IDRAC.md](checks/dc1/VRF%20IDRAC.md), [checks/dc2/pings.md](checks/dc2/pings.md) и [checks/dci-ping vlan 10.md](checks/dci-ping%20vlan%2010.md).
 
-## Что реализовано сейчас
+## Что реализовано в финальной версии
 
-- Подготовлена базовая VXLAN EVPN fabric на основе lab-06.
-- Скопированы исходные конфиги lab-06 в [configs/base-lab-06](configs/base-lab-06/).
+- Подготовлена VXLAN EVPN fabric на основе lab-06 и расширена до финального проектного стенда.
 - Подготовлены проектные конфиги сетевых устройств в [configs/bare-metal](configs/bare-metal/).
 - Подготовлены клиентские конфиги в [configs/clients](configs/clients/).
 - Добавлен border leaf `bl-1`.
 - Добавлен leaf `le-4` для EVPN multihoming-сценария.
-- Добавлены конфиги `vyos-fw` и `vyos-isp`.
+- Добавлены конфиги `vyos-fw`, `vyos-fw-dc2` и `vyos-isp`.
 - Добавлен VyOS-клиент `cl-1122` в VLAN 20 с dual-homed подключением к `le-1`/`le-2` через MLAG.
 - Добавлен VyOS-клиент `cl-3344` в VLAN 20 с dual-homed подключением к `le-3`/`le-4` через EVPN multihoming.
 - Добавлен VRF `IDRAC`, VLAN 30, L2VNI 10030 и публичный префикс `198.51.100.128/25`.
 - Клиент `cl-3` заменен на `cl-idrac-2` в VLAN 30.
 - Добавлены IDRAC-клиенты `cl-idrac-1` и `cl-idrac-2`.
+- Используются кастомные anycast MAC: `00:00:be:ef:ca:fe` для DC1 и `00:00:be:ef:dc:02` для DC2.
 - Разделены BGP underlay и overlay: IPv4 underlay работает по p2p-соседствам, EVPN overlay работает по `Loopback0`.
 - В IPv4 underlay анонсируются только loopback `/32`; p2p `/31` не попадают в BGP RIB.
 - Подготовлен и проверен автономный DC2/POD: `sp-21`, `sp-22`, `le-21`, `le-22`, `le-23`, `bl-21`.
 - В DC2 underlay построен на OSPF area 0, overlay - на iBGP EVPN с `sp-21`/`sp-22` как route-reflector.
-- В DC2 добавлен border leaf `bl-21` с VTEP `10.0.21.4/32` для будущего DCI.
+- В DC2 добавлен border leaf `bl-21` с VTEP `10.0.21.4/32` для DCI.
 - В DC2 добавлен локальный VRF `TENANT-DC2`, VLAN 210, L2VNI 10210, L3VNI 50200 и клиенты `cl-dc2-1`/`cl-dc2-2`/`cl-dc2-3`.
+- Добавлен отдельный роутер `vyos-fw-dc2` для DC2: AS `64498`, ISP-сегмент `198.51.100.4/30`, NAT `192.168.210.0/24` в `198.51.100.5`.
 - Построен DCI между `bl-1` и `bl-21`: eBGP IPv4 underlay по `10.255.0.0/31` и eBGP EVPN overlay по loopback.
 - VLAN 10 из `TENANT-1` растянут в DC2 как L2VNI 10010; клиент `cl-44` в DC2 пингует клиента DC1 и `8.8.8.8` через centralized gateway/edge в DC1.
 - Настроены firewall policy на внешнем интерфейсе `vyos-fw`, route-map для анонса наружу только public `/24` и route-map для отдачи внутрь fabric только default route.
@@ -634,7 +640,7 @@ cl-44> ping 8.8.8.8
 Предыдущие лабораторные работы выполнялись в одной общей EVE-NG лаборатории. Для проекта стенд был собран отдельно: конфигурации lab-06 использовались как база, но устройства запустились пустыми и настраивались заново.
 
 - Виртуальные клиенты в EVE-NG периодически зависали и не всегда запускались с первого раза. Из-за этого часть проверок приходилось повторять после перезапуска клиентских узлов.
-- При использовании команды `shutdown` на интерфейсах leaf в второну mlag клиента, поведение лабораторной не всегда соответствовало ожидаемому: несмотря на выключение интерфейса, в дампе всё равно наблюдался трафик.
+- При использовании команды `shutdown` на интерфейсах leaf в сторону MLAG-клиента поведение лабораторной не всегда соответствовало ожидаемому: несмотря на выключение интерфейса, в дампе всё равно наблюдался трафик.
 - При ребуте spine обнаружилось, что при схеме с `bgp listen range`, где spine ожидает входящие BGP-сессии от leaf, разница во времени установления соседств может быть до 1 минуты:
 ```
 sp-2#show ip bgp su
@@ -646,7 +652,7 @@ Neighbor Status Codes: m - Under maintenance
   10.2.2.3 4 65102             52        47    0    0 00:01:19 Estab   1      1
   10.2.2.5 4 65103             26        20    0    0 00:00:14 Estab   1      1
 ```
-- При поднятии peer-link между le-1 b le-2 была случайно собрана петля. Проблема проявилась не сразу по конфигурации, а по поведению клиентского трафика: появились задержки порядка 400-580 мс и периодические потери ICMP.
+- При поднятии peer-link между `le-1` и `le-2` была случайно собрана петля. Проблема проявилась не сразу по конфигурации, а по поведению клиентского трафика: появились задержки порядка 400-580 мс и периодические потери ICMP.
 ```
 84 bytes from 192.168.10.11 icmp_seq=30 ttl=63 time=461.701 ms
 192.168.10.11 icmp_seq=31 timeout
@@ -670,15 +676,21 @@ Neighbor Status Codes: m - Under maintenance
 Показать развитие стенда по картинкам:
 
 - [img/eve-ng-scheme.png](img/eve-ng-scheme.png) - исходная схема лабораторной.
+- [img/eve-ng-scheme-mvp.png](img/eve-ng-scheme-mvp.png) - первый минимальный вариант проекта на базе lab-06.
 - [img/eve-ng-scheme2.png](img/eve-ng-scheme2.png) - базовый VXLAN EVPN fabric с клиентами.
-- [img/eve-ng-scheme3.png](img/eve-ng-scheme3.png) - MVP с border leaf, `vyos-fw`, `vyos-isp`, NAT и внешним BGP.
-- [img/eve-ng-scheme4.png](img/eve-ng-scheme4.png) - текущая схема проекта с MLAG, EVPN multihoming и VRF `IDRAC`.
+- [img/eve-ng-scheme3.png](img/eve-ng-scheme3.png) - добавление border leaf, `vyos-fw`, `vyos-isp`, NAT и внешнего BGP.
+- [img/eve-ng-scheme4.png](img/eve-ng-scheme4.png) - добавление MLAG, EVPN multihoming и VRF `IDRAC`.
+- [img/eve-ng-scheme5.png](img/eve-ng-scheme5.png) - развитие DC1 с отдельными клиентскими сценариями.
+- [img/eve-ng-scheme6.png](img/eve-ng-scheme6.png) - автономный DC2/POD на OSPF underlay и iBGP EVPN.
+- [img/eve-ng-scheme7.png](img/eve-ng-scheme7.png) - DCI между DC1 и DC2 через border leaf.
+- [img/eve-ng-scheme8.png](img/eve-ng-scheme8.png) - финальная схема проекта.
 
 ### Iperf
 
 На `vyos-isp` запустить сервер:
 
 ```bash
+vyos@vyos-isp:/var/www/html$ sudo systemctl start iperf3.service
 vyos@vyos-isp:/var/www/html$ iperf3 -s
 ```
 
@@ -720,28 +732,22 @@ vyos@cl-3344:~$ sudo ping -c 4 198.51.100.143
 vyos@cl-3344:~$ traceroute 198.51.100.143
 ```
 
-## Ограничения текущего минимального варианта
+## Что не удалось внедрить в финальную версию
 
-- Используются два VRF: `TENANT-1` для production-сетей и `IDRAC` для OOB/iDRAC.
-- EVPN multihoming добавлен и базово проверен для одного клиента. Для финальной защиты можно дополнительно расширить проверки отказа полного leaf, если останется время.
-- Резервирование border leaf не входит в MVP.
-- DCI между DC1 и DC2 построен одним линком без резервирования.
-- Для `TENANT-1` в DC2 пока проверен L2 stretch VLAN 10 без локального L3VNI/SVI.
-- Выход `cl-44` в интернет работает централизованно через DC1; отдельный local breakout в DC2 пока не настроен.
-- Underlay в DC1 остается на BGP, underlay в DC2 подготовлен на OSPF.
+- Резервирование border leaf не реализовано: в каждом DC используется по одному border leaf (`bl-1` и `bl-21`).
+- DCI между DC1 и DC2 построен одним линком `bl-1` <-> `bl-21`; резервный DCI path и ECMP для межплощадочного контура не добавлены.
+- Для `TENANT-1` в DC2 проверен L2 stretch VLAN 10, но локальный L3VNI/SVI для `TENANT-1` в DC2 не внедрялся.
+- Внешний выход DC2 сделан через `vyos-fw-dc2`, но отказоустойчивый edge DC2 не доведен до уровня отдельного HA-сценария.
+- EVPN multihoming реализован для одного клиента `cl-3344`; расширенные failure-сценарии с отказом целого leaf можно добавить отдельно.
 - IDRAC public prefix намеренно доступен из имитированного интернета без whitelist на `vyos-fw`, чтобы наглядно показать внешний путь трафика.
-- Текущее состояние фиксирует VXLAN EVPN fabric в DC1, внешний edge, NAT, фильтрацию, MLAG, EVPN multihoming, отдельный IDRAC VRF, DC2/POD, border leaf `bl-21`, DCI и L2 stretch VLAN 10 между площадками.
+- В DC2 не выделялась отдельная публичная сеть `/24`: NAT для VLAN 210 выполняется в адрес из линковочной public-подсети `198.51.100.4/30`.
+- Шлюз IDRAC `198.51.100.129/25` не отказоустойчивый: он расположен только на `bl-1`.
 
-## Возможные расширения
-
-### Доработка EVPN multihoming
-
-Расширить уже собранные проверки: добавить явную проверку DF election, отказ одного клиентского линка и отказ одного leaf.
-
+## Возможные расширения после защиты
 
 ### Доработка DC2 и DCI
 
-Развить межплощадочный сценарий: добавить резервный DCI path, расширить проверки отказов, при необходимости добавить local breakout или отдельный внешний edge в DC2.
+Развить межплощадочный сценарий: добавить резервный DCI path, расширить проверки отказов и довести внешний выход DC2 до отдельного проверенного edge-сценария.
 
 ### Резервирование выхода наружу
 
@@ -749,4 +755,4 @@ vyos@cl-3344:~$ traceroute 198.51.100.143
 
 ## Вывод
 
-Минимальная архитектура на базе VXLAN EVPN закрывает основную задачу проекта: предоставляет масштабируемую L2/L3-связность внутри датацентра, отделяет клиентские сервисы от физической топологии underlay и создает основу для дальнейшего роста. Добавление border leaf и VyOS превращает лабораторную overlay-сеть в более законченный контур датацентра с внешней связностью и NAT.
+Итоговая архитектура на базе VXLAN EVPN закрывает основную задачу проекта: предоставляет масштабируемую L2/L3-связность внутри датацентра, отделяет клиентские сервисы от физической топологии underlay и создает основу для дальнейшего роста. Добавление border leaf и VyOS превращает лабораторную overlay-сеть в более законченный контур датацентра с внешней связностью и NAT.
